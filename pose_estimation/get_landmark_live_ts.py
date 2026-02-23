@@ -1,36 +1,63 @@
-import cv2
-import mediapipe as mp
-import numpy as np
+"""
+get_landmark_live_ts.py
+------------------------
+Records a time series of human upper-body pose landmarks from a webcam
+and saves them to a CSV file for offline analysis and learning.
+
+For each detected frame, the (x, y, z) coordinates of the following
+MediaPipe landmarks are recorded:
+    - Left/right shoulder (11, 12)
+    - Left/right elbow    (13, 14)
+    - Left/right wrist    (15, 16)
+
+Output CSV format:
+    timestamp, l_shoulder_x, l_shoulder_y, l_shoulder_z, l_elbow_x, ...
+
+Press Q to stop recording and close the window.
+
+Requirements:
+    - mediapipe, opencv-python installed.
+    - pose_landmarker_heavy.task model file in the same directory.
+"""
+
 import csv
 import time
-from pathlib import Path
+import numpy as np
+import cv2
+import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision import drawing_utils, drawing_styles
+from pathlib import Path
 
-from human_to_robot.human_to_robot_converter import human_pose_to_robot_commands
 
+# --- Paths ---
+SCRIPT_DIR  = Path(__file__).parent
+MODEL_PATH  = SCRIPT_DIR / "pose_landmarker_heavy.task"
+OUTPUT_PATH = SCRIPT_DIR / "reachy_motion_dataset.csv"
 
-# ----------------------------
-# CONFIG
-# ----------------------------
-model_path = Path(__file__).parent / "pose_landmarker_heavy.task"
-
-# MediaPipe pose landmark indices utili per robot
+# MediaPipe landmark indices for upper-body joints relevant to Reachy
 JOINTS = {
     "l_shoulder": 11,
-    "l_elbow": 13,
-    "l_wrist": 15,
+    "l_elbow":    13,
+    "l_wrist":    15,
     "r_shoulder": 12,
-    "r_elbow": 14,
-    "r_wrist": 16,
+    "r_elbow":    14,
+    "r_wrist":    16,
 }
 
 
-# ----------------------------
-# DISEGNO LANDMARK
-# ----------------------------
-def draw_landmarks_on_image(rgb_image, detection_result):
+def draw_landmarks_on_image(rgb_image: np.ndarray, detection_result) -> np.ndarray:
+    """
+    Draws pose landmarks and skeleton connections on a copy of the input image.
+
+    Args:
+        rgb_image: Input image in RGB format (H x W x 3 numpy array).
+        detection_result: MediaPipe PoseLandmarker detection result.
+
+    Returns:
+        np.ndarray: Annotated image in RGB format.
+    """
     annotated = np.copy(rgb_image)
 
     if detection_result.pose_landmarks:
@@ -45,94 +72,116 @@ def draw_landmarks_on_image(rgb_image, detection_result):
     return annotated
 
 
-# ----------------------------
-# CONFIGURA MODELLO
-# ----------------------------
-base_options = python.BaseOptions(model_asset_path=str(model_path))
+def build_csv_header() -> list:
+    """
+    Builds the CSV header row based on the JOINTS dictionary.
 
-options = vision.PoseLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.VIDEO
-)
-
-detector = vision.PoseLandmarker.create_from_options(options)
-
-
-# ----------------------------
-# CREA FILE CSV
-# ----------------------------
-csv_file = open("reachy_motion_dataset.csv", "w", newline="")
-writer = csv.writer(csv_file)
-
-# header
-header = ["timestamp"]
-for joint in JOINTS.keys():
-    header += [f"{joint}_x", f"{joint}_y", f"{joint}_z"]
-
-writer.writerow(header)
+    Returns:
+        list: Header row with 'timestamp' followed by '<joint>_x/y/z' columns.
+    """
+    header = ["timestamp"]
+    for joint_name in JOINTS:
+        header += [f"{joint_name}_x", f"{joint_name}_y", f"{joint_name}_z"]
+    return header
 
 
-# ----------------------------
-# WEBCAM
-# ----------------------------
-cap = cv2.VideoCapture(0)
+def extract_landmark_row(pose_landmarks, timestamp: float) -> list:
+    """
+    Extracts (x, y, z) coordinates for each tracked joint from a pose detection result
+    and prepends the timestamp.
 
-if not cap.isOpened():
-    print("Errore apertura webcam")
-    exit()
+    Args:
+        pose_landmarks: List of landmark objects from MediaPipe (one pose).
+        timestamp: Unix timestamp (float) of the captured frame.
 
-print("Recording motion dataset... premi Q per uscire")
+    Returns:
+        list: A flat row [timestamp, x, y, z, x, y, z, ...] ready to write to CSV.
+    """
+    row = [timestamp]
+    for joint_name, idx in JOINTS.items():
+        lm = pose_landmarks[idx]
+        row += [lm.x, lm.y, lm.z]
+    return row
 
-frame_timestamp = 0
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+def run_motion_recording(model_path: Path, output_path: Path) -> None:
+    """
+    Runs real-time pose estimation and records landmark time series to a CSV file.
 
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    Opens the default webcam, detects upper-body landmarks on each frame,
+    displays the annotated video, and writes one CSV row per detected frame.
+    A frame counter is displayed on screen during recording.
 
-    mp_image = mp.Image(
-        image_format=mp.ImageFormat.SRGB,
-        data=rgb_frame
+    Args:
+        model_path: Path to the MediaPipe pose landmarker model (.task file).
+        output_path: Path to the output CSV file.
+    """
+    # Set up MediaPipe detector
+    base_options = python.BaseOptions(model_asset_path=str(model_path))
+    options = vision.PoseLandmarkerOptions(
+        base_options=base_options,
+        running_mode=vision.RunningMode.VIDEO,
     )
+    detector = vision.PoseLandmarker.create_from_options(options)
 
-    result = detector.detect_for_video(mp_image, frame_timestamp)
-    frame_timestamp += 1
+    # Open webcam
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Could not open webcam.")
+        return
 
-    # ----------------------------
-    # SALVA TIME SERIES
-    # ----------------------------
-    if result.pose_landmarks:
-        pose = result.pose_landmarks[0]
+    print(f"Recording started — press Q to stop. Saving to: {output_path}")
 
-        row = [time.time()]  # timestamp reale
+    frame_timestamp = 0
+    recorded_frames = 0
 
-        for joint_name, idx in JOINTS.items():
-            lm = pose[idx]
-            row += [lm.x, lm.y, lm.z]
+    with open(output_path, "w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(build_csv_header())
 
-        robot_commands = human_pose_to_robot_commands(row[1:])  # escludi timestamp
-        print("Robot commands:", robot_commands)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        writer.writerow(row)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    # ----------------------------
-    # VISUALIZZAZIONE
-    # ----------------------------
-    annotated = draw_landmarks_on_image(rgb_frame, result)
-    annotated = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+            result = detector.detect_for_video(mp_image, frame_timestamp)
+            frame_timestamp += 1
 
-    cv2.imshow("Motion Capture", annotated)
+            # Record landmarks if a pose is detected
+            if result.pose_landmarks:
+                pose = result.pose_landmarks[0]
+                row = extract_landmark_row(pose, time.time())
+                writer.writerow(row)
+                recorded_frames += 1
 
-    if cv2.waitKey(1) & 0xFF == ord("q"):
-        break
+            # Draw skeleton overlay
+            annotated = draw_landmarks_on_image(rgb_frame, result)
+            display = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
+
+            # Show frame counter on screen
+            cv2.putText(
+                display,
+                f"Recorded frames: {recorded_frames}",
+                org=(10, 30),
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                fontScale=0.8,
+                color=(0, 200, 0),
+                thickness=2,
+            )
+
+            cv2.imshow("Motion Recording — press Q to quit", display)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+    cap.release()
+    cv2.destroyAllWindows()
+    detector.close()
+    print(f"✅ Recording complete. {recorded_frames} frames saved to: {output_path}")
 
 
-# ----------------------------
-# CLEANUP
-# ----------------------------
-csv_file.close()
-cap.release()
-cv2.destroyAllWindows()
-detector.close()
+if __name__ == "__main__":
+    run_motion_recording(MODEL_PATH, OUTPUT_PATH)
