@@ -16,9 +16,11 @@ Joint mapping:
     Human shoulder pitch    → r/l_shoulder_pitch
     Human shoulder roll     → r/l_shoulder_roll
     Human wrist pitch       → r/l_wrist_pitch
-    Human upper arm twist   → r/l_arm_yaw      (approximated)
-    Human forearm twist     → r/l_forearm_yaw  (approximated)
-    Human wrist twist       → r/l_wrist_roll   (approximated)
+    Human upper arm twist   → r/l_arm_yaw        (approximated)
+    Human forearm twist     → r/l_forearm_yaw    (approximated)
+    Human wrist twist       → r/l_wrist_roll     (approximated)
+    Head orientation        → head.look_at()     (nose relative to shoulders midpoint)
+    Finger-thumb distance   → r/l_gripper        (normalized pinch distance)
 
 Note on axial rotations (arm_yaw, forearm_yaw, wrist_roll):
     These are rotations around the limb's own axis. Since MediaPipe only gives
@@ -50,7 +52,7 @@ REACHY_HOST = "localhost"
 
 # Duration of each goto() step (seconds).
 # Lower = faster replay but less smooth. Should match the CSV sampling rate.
-STEP_DURATION = 0.1
+STEP_DURATION = 0.06
 
 # Smoothing window size (number of frames). Higher = smoother but more lag.
 SMOOTH_WINDOW = 7
@@ -66,6 +68,7 @@ SCALE = {
     "arm_yaw":        0.5,   # axial — keep lower
     "forearm_yaw":    0.5,   # axial — keep lower
     "wrist_roll":     0.4,   # axial — keep lower
+    "head":           2.0,   # head look_at — no scaling needed
 }
 
 # Joint angle limits (degrees) — hard clamp to keep movements safe.
@@ -77,6 +80,7 @@ LIMITS = {
     "r_forearm_yaw":    (-100,  100),
     "r_wrist_pitch":    ( -45,  45),
     "r_wrist_roll":     ( -55,  35),
+    "r_gripper":        ( -69,  20),
 
     "l_shoulder_pitch": (-150,  90),
     "l_shoulder_roll":  ( -10, 180),
@@ -85,7 +89,12 @@ LIMITS = {
     "l_forearm_yaw":    (-100, 100),
     "l_wrist_pitch":    ( -45,  45),
     "l_wrist_roll":     ( -35,  55),
+    "l_gripper":        ( -20,  69),
 }
+
+# Gripper range in Reachy degrees: -69 = fully open, 20 = fully closed.
+GRIPPER_OPEN   = -69.0
+GRIPPER_CLOSED =  20.0
 
 
 # ---------------------------------------------------------------------------
@@ -292,27 +301,111 @@ def compute_wrist_roll(shoulder: np.ndarray, elbow: np.ndarray, wrist: np.ndarra
     return roll
 
 
+
+def compute_head_lookat(head: np.ndarray, r_shoulder: np.ndarray, l_shoulder: np.ndarray) -> tuple:
+    """
+    Computes the (x, y, z) point for reachy.head.look_at() from the nose position.
+
+    The nose is expressed relative to the midpoint between the shoulders,
+    then converted from MediaPipe coordinates to Reachy robot frame:
+        MediaPipe: x=right(person's left), y=down, z=toward camera
+        Reachy:    x=forward, y=left, z=up
+
+    The point is projected at a fixed forward distance of 1.0m so that
+    look_at() always has a well-defined target regardless of camera distance.
+
+    Args:
+        head:       Nose landmark position [x, y, z] in MediaPipe coords.
+        r_shoulder: Right shoulder landmark position in MediaPipe coords.
+        l_shoulder: Left shoulder landmark position in MediaPipe coords.
+
+    Returns:
+        tuple: (x, y, z) point in Reachy robot frame for look_at().
+    """
+    shoulders_mid = (r_shoulder + l_shoulder) / 2.0
+    rel = head - shoulders_mid
+
+    # Normalize by shoulder width to be camera-distance independent
+    shoulder_width = np.linalg.norm(r_shoulder - l_shoulder) + 1e-8
+    rel_norm = rel / shoulder_width
+
+    # Convert MediaPipe -> Reachy:
+    #   Reachy x (forward) = 1.0 (fixed)
+    #   Reachy y (left)    = -MediaPipe x  (MP x is person's left = robot's right)
+    #   Reachy z (up)      = -MediaPipe y  (MP y is down)
+    robot_x = 1.0
+    robot_y = -rel_norm[0] * SCALE["head"]
+    robot_z = rel_norm[1] * SCALE["head"]
+    looking_at = (robot_x, robot_y, robot_z)
+    return looking_at
+
+
+def compute_gripper(wrist: np.ndarray, finger: np.ndarray, thumb: np.ndarray, isLeft: bool = False) -> float:
+    """
+    Computes the gripper angle from the pinch distance between finger and thumb.
+
+    The raw finger-thumb distance is normalized by the wrist-finger distance
+    (a proxy for hand size) to make it independent of camera distance.
+
+    Mapping:
+        normalized distance = 1.0 (hand open)   -> GRIPPER_OPEN  (-69 deg)
+        normalized distance = 0.0 (pinch closed) -> GRIPPER_CLOSED (20 deg)
+
+    Args:
+        wrist:  Wrist landmark position [x, y, z].
+        finger: Index finger tip landmark position [x, y, z].
+        thumb:  Thumb tip landmark position [x, y, z].
+
+    Returns:
+        float: Gripper angle in Reachy convention.
+    """
+    pinch_dist = np.linalg.norm(finger - thumb)
+    hand_size  = np.linalg.norm(finger - wrist) + 1e-8
+    norm_pinch = np.clip(pinch_dist / hand_size, 0.0, 1.0)
+
+    # Linear interpolation: open (1.0) -> GRIPPER_OPEN, closed (0.0) -> GRIPPER_CLOSED
+    if isLeft:
+        gripper_pos = -float(GRIPPER_CLOSED + norm_pinch * (GRIPPER_OPEN - GRIPPER_CLOSED))
+    else:
+        gripper_pos = float(GRIPPER_CLOSED + norm_pinch * (GRIPPER_OPEN - GRIPPER_CLOSED))
+
+    return gripper_pos
+
 # ---------------------------------------------------------------------------
 # FRAME PROCESSING
 # ---------------------------------------------------------------------------
 
 def landmarks_to_robot_angles(row: pd.Series) -> dict:
     """
-    Converts one frame of MediaPipe landmarks to a dictionary of Reachy joint angles.
+    Converts one frame of MediaPipe landmarks to a dictionary of Reachy joint angles,
+    gripper values, and head look_at target.
+
+    The returned dict contains:
+    - Joint angles for both arms (for goto())
+    - Gripper angles r/l_gripper (for goto())
+    - Head look_at target as head_x, head_y, head_z (handled separately in replay)
 
     Args:
         row: One row of the CSV DataFrame (landmark positions for one timestep).
 
     Returns:
-        dict: {joint_name: angle_degrees} for all mapped joints.
+        dict: {joint_name: value} for all mapped joints + head + grippers.
     """
+    # Arms
     r_shoulder = np.array([row["r_shoulder_x"], row["r_shoulder_y"], row["r_shoulder_z"]])
     r_elbow    = np.array([row["r_elbow_x"],    row["r_elbow_y"],    row["r_elbow_z"]])
     r_wrist    = np.array([row["r_wrist_x"],    row["r_wrist_y"],    row["r_wrist_z"]])
+    r_finger   = np.array([row["r_finger_x"],   row["r_finger_y"],   row["r_finger_z"]])
+    r_thumb    = np.array([row["r_thumb_x"],    row["r_thumb_y"],    row["r_thumb_z"]])
 
     l_shoulder = np.array([row["l_shoulder_x"], row["l_shoulder_y"], row["l_shoulder_z"]])
     l_elbow    = np.array([row["l_elbow_x"],    row["l_elbow_y"],    row["l_elbow_z"]])
     l_wrist    = np.array([row["l_wrist_x"],    row["l_wrist_y"],    row["l_wrist_z"]])
+    l_finger   = np.array([row["l_finger_x"],   row["l_finger_y"],   row["l_finger_z"]])
+    l_thumb    = np.array([row["l_thumb_x"],    row["l_thumb_y"],    row["l_thumb_z"]])
+
+    # Head
+    head       = np.array([row["head_x"],       row["head_y"],       row["head_z"]])
 
     angles = {
         # Right arm
@@ -323,6 +416,7 @@ def landmarks_to_robot_angles(row: pd.Series) -> dict:
         "r_forearm_yaw":    compute_forearm_yaw(r_shoulder, r_elbow, r_wrist)     * SCALE["forearm_yaw"],
         "r_wrist_pitch":    compute_wrist_pitch(r_shoulder, r_elbow, r_wrist)     * SCALE["wrist_pitch"],
         "r_wrist_roll":     compute_wrist_roll(r_shoulder, r_elbow, r_wrist)      * SCALE["wrist_roll"],
+        "r_gripper":        compute_gripper(r_wrist, r_finger, r_thumb),
         # Left arm
         "l_shoulder_pitch": compute_shoulder_pitch(l_shoulder, l_elbow)           * SCALE["shoulder_pitch"],
         "l_shoulder_roll":  compute_shoulder_roll_left(l_shoulder, l_elbow)       * SCALE["shoulder_roll"],
@@ -331,12 +425,19 @@ def landmarks_to_robot_angles(row: pd.Series) -> dict:
         "l_forearm_yaw":    compute_forearm_yaw(l_shoulder, l_elbow, l_wrist)     * SCALE["forearm_yaw"],
         "l_wrist_pitch":    compute_wrist_pitch(l_shoulder, l_elbow, l_wrist)     * SCALE["wrist_pitch"],
         "l_wrist_roll":     compute_wrist_roll(l_shoulder, l_elbow, l_wrist)      * SCALE["wrist_roll"],
+        "l_gripper":        compute_gripper(l_wrist, l_finger, l_thumb, True),
     }
 
-    # Clamp to safe limits
+    # Clamp joint angles to safe limits
     for joint, value in angles.items():
         lo, hi = LIMITS[joint]
         angles[joint] = float(np.clip(value, lo, hi))
+
+    # Head look_at target — stored as separate columns, not clamped
+    hx, hy, hz = compute_head_lookat(head, r_shoulder, l_shoulder)
+    angles["head_x"] = hx
+    angles["head_y"] = hy
+    angles["head_z"] = hz
 
     return angles
 
@@ -360,11 +461,18 @@ def smooth_angle_sequence(angles_df: pd.DataFrame, window: int) -> pd.DataFrame:
         pd.DataFrame: Smoothed angles.
     """
     axial_joints = ["arm_yaw", "forearm_yaw", "wrist_roll"]
+    head_cols    = ["head_x", "head_y", "head_z"]   # smooth head but with larger window
     smoothed = angles_df.copy()
 
     for col in smoothed.columns:
         is_axial = any(ax in col for ax in axial_joints)
-        w = window * 2 if is_axial else window
+        is_head  = col in head_cols
+        if is_head:
+            w = window * 3   # head movements benefit from extra smoothing
+        elif is_axial:
+            w = window * 2
+        else:
+            w = window
         smoothed[col] = uniform_filter1d(smoothed[col].values, size=w)
 
     return smoothed
@@ -376,15 +484,22 @@ def smooth_angle_sequence(angles_df: pd.DataFrame, window: int) -> pd.DataFrame:
 
 def replay_on_robot(reachy: ReachySDK, angles_df: pd.DataFrame) -> None:
     """
-    Sends each frame of joint angles to Reachy sequentially using goto().
+    Sends each frame of joint angles to Reachy sequentially.
+
+    For each frame:
+    - Arms and grippers are commanded via goto()
+    - Head orientation is commanded via reachy.head.look_at()
+
+    Both calls use STEP_DURATION so arms and head move in sync.
 
     Args:
         reachy: Connected ReachySDK instance.
-        angles_df: DataFrame of joint angles (one row = one timestep).
+        angles_df: DataFrame with joint angles, gripper values, and head targets.
     """
     print(f"Replaying {len(angles_df)} frames on robot...")
 
     for i, (_, row) in enumerate(angles_df.iterrows()):
+        # Arms + grippers via goto()
         goal_positions = {
             reachy.r_arm.r_shoulder_pitch: row["r_shoulder_pitch"],
             reachy.r_arm.r_shoulder_roll:  row["r_shoulder_roll"],
@@ -393,6 +508,7 @@ def replay_on_robot(reachy: ReachySDK, angles_df: pd.DataFrame) -> None:
             reachy.r_arm.r_forearm_yaw:    row["r_forearm_yaw"],
             reachy.r_arm.r_wrist_pitch:    row["r_wrist_pitch"],
             reachy.r_arm.r_wrist_roll:     row["r_wrist_roll"],
+            reachy.r_arm.r_gripper:        row["r_gripper"],
             reachy.l_arm.l_shoulder_pitch: row["l_shoulder_pitch"],
             reachy.l_arm.l_shoulder_roll:  row["l_shoulder_roll"],
             reachy.l_arm.l_arm_yaw:        row["l_arm_yaw"],
@@ -400,12 +516,21 @@ def replay_on_robot(reachy: ReachySDK, angles_df: pd.DataFrame) -> None:
             reachy.l_arm.l_forearm_yaw:    row["l_forearm_yaw"],
             reachy.l_arm.l_wrist_pitch:    row["l_wrist_pitch"],
             reachy.l_arm.l_wrist_roll:     row["l_wrist_roll"],
+            reachy.l_arm.l_gripper:        row["l_gripper"],
         }
 
         goto(
             goal_positions=goal_positions,
             duration=STEP_DURATION,
             interpolation_mode=InterpolationMode.MINIMUM_JERK,
+        )
+
+        # Head via look_at() — called after goto() (both are non-blocking at this duration)
+        reachy.head.look_at(
+            row["head_x"],
+            row["head_y"],
+            row["head_z"],
+            duration=STEP_DURATION,
         )
 
         if i % 50 == 0:

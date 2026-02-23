@@ -38,12 +38,17 @@ OUTPUT_PATH = SCRIPT_DIR / "reachy_motion_dataset.csv"
 
 # MediaPipe landmark indices for upper-body joints relevant to Reachy
 JOINTS = {
+    "head":       0,
     "l_shoulder": 11,
     "l_elbow":    13,
     "l_wrist":    15,
+    "l_finger":   19,
+    "l_thumb":    21,
     "r_shoulder": 12,
     "r_elbow":    14,
     "r_wrist":    16,
+    "r_finger":   20,
+    "r_thumb":    22,
 }
 
 
