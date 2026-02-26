@@ -23,9 +23,11 @@ time.sleep(1)
 
 
 #reachy.r_arm.r_shoulder_roll.goal_position = -90    # -0.8376 = max -y
-reachy.r_arm.r_shoulder_pitch.goal_position = -90    # 0.6474 = max x
+# reachy.r_arm.r_shoulder_pitch.goal_position = -90    # 0.6474 = max x
 # reachy.r_arm.r_shoulder_pitch.goal_position = -150    # 0.5587 = max z
 
+reachy.r_arm.r_arm_yaw.goal_position = 90       
+reachy.l_arm.l_arm_yaw.goal_position = 90       
 
 time.sleep(2)
 

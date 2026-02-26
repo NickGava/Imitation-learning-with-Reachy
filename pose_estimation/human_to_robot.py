@@ -52,7 +52,7 @@ REACHY_HOST = "localhost"
 
 # Duration of each goto() step (seconds).
 # Lower = faster replay but less smooth. Should match the CSV sampling rate.
-STEP_DURATION = 0.06
+STEP_DURATION = 0.05
 
 # Smoothing window size (number of frames). Higher = smoother but more lag.
 SMOOTH_WINDOW = 7
@@ -61,13 +61,13 @@ SMOOTH_WINDOW = 7
 # Axial rotations (arm_yaw, forearm_yaw, wrist_roll) are kept lower because
 # they are approximated from position data and tend to be noisier.
 SCALE = {
-    "shoulder_pitch": 0.8,
-    "shoulder_roll":  0.8,
-    "elbow_pitch":    0.9,
-    "wrist_pitch":    0.6,
-    "arm_yaw":        0.5,   # axial — keep lower
+    "shoulder_pitch": 1.1,
+    "shoulder_roll":  0.4,
+    "elbow_pitch":    0.8,
+    "wrist_pitch":    0.8,
+    "arm_yaw":        1.2,   # axial — keep lower
     "forearm_yaw":    0.5,   # axial — keep lower
-    "wrist_roll":     0.4,   # axial — keep lower
+    "wrist_roll":     0.5,   # axial — keep lower
     "head":           2.0,   # head look_at — no scaling needed
 }
 
@@ -100,6 +100,9 @@ GRIPPER_CLOSED =  20.0
 # ---------------------------------------------------------------------------
 # GEOMETRY HELPERS
 # ---------------------------------------------------------------------------
+
+def normalize(v, eps=1e-8):
+    return v / (np.linalg.norm(v) + eps)
 
 def angle_between(v1: np.ndarray, v2: np.ndarray) -> float:
     """
@@ -144,6 +147,157 @@ def signed_angle_around_axis(v_from: np.ndarray, v_to: np.ndarray, axis: np.ndar
 # JOINT ANGLE COMPUTATION
 # ---------------------------------------------------------------------------
 
+
+def compute_head_lookat(head: np.ndarray, r_shoulder: np.ndarray, l_shoulder: np.ndarray) -> tuple:
+    """
+    Computes the (x, y, z) point for reachy.head.look_at() from the nose position.
+
+    The nose is expressed relative to the midpoint between the shoulders,
+    then converted from MediaPipe coordinates to Reachy robot frame:
+        MediaPipe: x=right(person's left), y=down, z=toward camera
+        Reachy:    x=forward, y=left, z=up
+
+    The point is projected at a fixed forward distance of 1.0m so that
+    look_at() always has a well-defined target regardless of camera distance.
+
+    Args:
+        head:       Nose landmark position [x, y, z] in MediaPipe coords.
+        r_shoulder: Right shoulder landmark position in MediaPipe coords.
+        l_shoulder: Left shoulder landmark position in MediaPipe coords.
+
+    Returns:
+        tuple: (x, y, z) point in Reachy robot frame for look_at().
+    """
+    shoulders_mid = (r_shoulder + l_shoulder) / 2.0
+    rel = head - shoulders_mid
+
+    # Normalize by shoulder width to be camera-distance independent
+    shoulder_width = np.linalg.norm(r_shoulder - l_shoulder) + 1e-8
+    rel_norm = rel / shoulder_width
+
+    # Convert MediaPipe -> Reachy:
+    #   Reachy x (forward) = 1.0 (fixed)
+    #   Reachy y (left)    = -MediaPipe x  (MP x is person's left = robot's right)
+    #   Reachy z (up)      = -MediaPipe y  (MP y is down)
+    robot_x = 1.0
+    robot_y = rel_norm[0] * SCALE["head"]  # head looks left/right more strongly based on horizontal nose displacement
+    robot_z = (rel_norm[1] + 0.8) * SCALE["head"]  # add vertical offset so head looks slightly above shoulders
+    looking_at = (robot_x, robot_y, robot_z)
+    return looking_at
+
+def compute_shoulder_pitch(shoulder: np.ndarray, elbow: np.ndarray) -> float:
+    """
+    Computes the shoulder pitch (forward/backward rotation).
+
+    - Arm hanging down → pitch =   0°
+    - Arm forward      → pitch = -90°
+    - Arm raised back  → pitch = +90°
+
+    Returns:
+        float: shoulder_pitch in degrees.
+    """
+    upper_arm = elbow - shoulder
+    ua_n = upper_arm / (np.linalg.norm(upper_arm) + 1e-8)
+    proj = np.array([0, ua_n[1], ua_n[2]])
+    proj /= (np.linalg.norm(proj) + 1e-8)
+    pitch = np.degrees(np.arctan2(-proj[2], proj[1]))       # atan(-z, y), where y is down and -z is toward camera in MediaPipe
+    return -pitch                                           # Negate to match Reachy's convention: negative pitch = arm raised forward, poitive = backward
+
+def compute_shoulder_roll(shoulder: np.ndarray, elbow: np.ndarray, isLeft: bool = False) -> float:
+    """
+    Computes the shoulder roll.
+
+    - Arm hanging down       → roll =  0°
+    - Arm raised to the side → roll = negative (right arm) or positive (left arm)
+
+    Returns:
+        float: shoulder_roll in degrees.
+    """
+    upper_arm = elbow - shoulder
+    ua_n = upper_arm / (np.linalg.norm(upper_arm) + 1e-8)
+    proj = np.array([ua_n[0], ua_n[1], 0.0])
+    proj /= (np.linalg.norm(proj) + 1e-8)
+
+    if isLeft:
+        roll = np.degrees(np.arctan2(proj[0], proj[1]))         # atan(x, y), where x is right and y is down in MediaPipe
+    else:
+        roll = -np.degrees(np.arctan2(-proj[0], proj[1]))       # atan(-x, y), where x is right and y is down in MediaPipe; Negate to match Reachy's convention: negative roll = arm raised to the right, positive = across body
+    return roll
+
+
+def compute_arm_axial_rotation(
+    shoulder: np.ndarray,
+    elbow: np.ndarray,
+    wrist: np.ndarray,
+    isLeft: bool = False
+) -> float:
+    """
+    Stima la rotazione assiale dell'omero (twist attorno all'asse spalla-gomito).
+
+    Metodo:
+    - Costruisce l'asse dell'omero (shoulder -> elbow)
+    - Proietta il vettore avambraccio sul piano perpendicolare all'omero
+    - Calcola l'angolo rispetto a una direzione di riferimento stabile
+
+    Returns:
+        float: angolo in gradi
+               positivo = rotazione interna (convenzione destra)
+    """
+
+    eps = 1e-8
+
+    # 1️⃣ Asse omero
+    upper_arm = elbow - shoulder
+    ua_norm = np.linalg.norm(upper_arm)
+    if ua_norm < eps:
+        return 0.0
+    ua = upper_arm / ua_norm  # asse normalizzato
+
+    # 2️⃣ Vettore avambraccio
+    forearm = wrist - elbow
+    fa_norm = np.linalg.norm(forearm)
+    if fa_norm < eps:
+        return 0.0
+    fa = forearm / fa_norm
+
+    # 3️⃣ Proiezione dell'avambraccio sul piano ⟂ all'omero
+    # rimuoviamo la componente lungo ua
+    fa_proj = fa - np.dot(fa, ua) * ua
+    proj_norm = np.linalg.norm(fa_proj)
+    if proj_norm < eps:
+        return 0.0
+    fa_proj /= proj_norm
+
+    # 4️⃣ Creiamo un asse di riferimento stabile nel piano
+    # usiamo l'asse verticale globale (Y) come riferimento
+    global_y = np.array([0.0, 1.0, 0.0])
+
+    # costruiamo un vettore nel piano ortogonale a ua
+    ref = global_y - np.dot(global_y, ua) * ua
+    ref_norm = np.linalg.norm(ref)
+    if ref_norm < eps:
+        # se l'omero è quasi parallelo a Y, usiamo X globale
+        global_x = np.array([1.0, 0.0, 0.0])
+        ref = global_x - np.dot(global_x, ua) * ua
+        ref /= (np.linalg.norm(ref) + eps)
+    else:
+        ref /= ref_norm
+
+    # 5️⃣ Calcolo angolo firmato nel piano
+    # usando prodotto vettoriale per il segno
+    cross = np.cross(ref, fa_proj)
+    sin_angle = np.dot(cross, ua)
+    cos_angle = np.dot(ref, fa_proj)
+
+    angle = np.degrees(np.arctan2(sin_angle, cos_angle))
+
+    if isLeft:
+        angle = -angle
+
+    return -angle
+
+
+
 def compute_elbow_pitch(shoulder: np.ndarray, elbow: np.ndarray, wrist: np.ndarray) -> float:
     """
     Computes the elbow flexion angle.
@@ -160,77 +314,6 @@ def compute_elbow_pitch(shoulder: np.ndarray, elbow: np.ndarray, wrist: np.ndarr
     flexion_angle = angle_between(v_to_shoulder, v_to_wrist)
     pitch = - flexion_angle * (125.0 / 180.0)
     return pitch
-
-
-def compute_shoulder_pitch(shoulder: np.ndarray, elbow: np.ndarray) -> float:
-    """
-    Computes the shoulder pitch (forward/backward rotation in the sagittal plane).
-
-    - Arm hanging down → pitch =   0°
-    - Arm forward      → pitch = -90°
-    - Arm raised back  → pitch = +90°
-
-    Returns:
-        float: shoulder_pitch in degrees.
-    """
-    upper_arm = elbow - shoulder
-    ua_n = upper_arm / (np.linalg.norm(upper_arm) + 1e-8)
-    pitch = np.degrees(np.arctan2(ua_n[2], ua_n[1]))
-    return pitch
-
-def compute_shoulder_roll_right(shoulder: np.ndarray, elbow: np.ndarray) -> float:
-    """
-    Computes the right shoulder roll (lateral abduction).
-
-    - Arm hanging down       → roll =  0°
-    - Arm raised to the side → roll = negative (Reachy right arm convention)
-
-    Returns:
-        float: shoulder_roll in degrees for the right arm.
-    """
-    upper_arm = elbow - shoulder
-    ua_n = upper_arm / (np.linalg.norm(upper_arm) + 1e-8)
-    roll = np.degrees(np.arctan2(ua_n[0], ua_n[1]))
-    return roll
-
-
-def compute_shoulder_roll_left(shoulder: np.ndarray, elbow: np.ndarray) -> float:
-    """
-    Computes the left shoulder roll (lateral abduction).
-
-    Returns:
-        float: shoulder_roll in degrees for the left arm.
-    """
-    upper_arm = elbow - shoulder
-    ua_n = upper_arm / (np.linalg.norm(upper_arm) + 1e-8)
-    roll = np.degrees(np.arctan2(-ua_n[0], ua_n[1]))
-    return roll
-
-
-def compute_arm_yaw(shoulder: np.ndarray, elbow: np.ndarray) -> float:
-    """
-    Approximates the upper arm yaw (axial rotation around the shoulder-elbow axis).
-
-    Uses the angle of the upper arm projected onto the horizontal plane (XZ
-    in MediaPipe, where Y is down). When the arm hangs at the side pointing
-    straight down the projection is zero; as the elbow rotates forward or
-    backward the yaw increases.
-
-    Note: this is an approximation — MediaPipe point positions do not encode
-    true axial rotation of the limb segment.
-
-    Returns:
-        float: arm_yaw in degrees (positive = elbow rotated forward/inward).
-    """
-    upper_arm = elbow - shoulder
-    ua_n = upper_arm / (np.linalg.norm(upper_arm) + 1e-8)
-
-    horiz_mag = np.sqrt(ua_n[0]**2 + ua_n[2]**2)
-    if horiz_mag < 1e-3:
-        return 0.0
-
-    yaw = np.degrees(np.arctan2(ua_n[2], ua_n[0]))
-    return -yaw
 
 
 def compute_forearm_yaw(shoulder: np.ndarray, elbow: np.ndarray, wrist: np.ndarray) -> float:
@@ -299,45 +382,6 @@ def compute_wrist_roll(shoulder: np.ndarray, elbow: np.ndarray, wrist: np.ndarra
     upper_arm = elbow - shoulder
     roll = signed_angle_around_axis(ref_perp_n, upper_arm, fa_n)
     return roll
-
-
-
-def compute_head_lookat(head: np.ndarray, r_shoulder: np.ndarray, l_shoulder: np.ndarray) -> tuple:
-    """
-    Computes the (x, y, z) point for reachy.head.look_at() from the nose position.
-
-    The nose is expressed relative to the midpoint between the shoulders,
-    then converted from MediaPipe coordinates to Reachy robot frame:
-        MediaPipe: x=right(person's left), y=down, z=toward camera
-        Reachy:    x=forward, y=left, z=up
-
-    The point is projected at a fixed forward distance of 1.0m so that
-    look_at() always has a well-defined target regardless of camera distance.
-
-    Args:
-        head:       Nose landmark position [x, y, z] in MediaPipe coords.
-        r_shoulder: Right shoulder landmark position in MediaPipe coords.
-        l_shoulder: Left shoulder landmark position in MediaPipe coords.
-
-    Returns:
-        tuple: (x, y, z) point in Reachy robot frame for look_at().
-    """
-    shoulders_mid = (r_shoulder + l_shoulder) / 2.0
-    rel = head - shoulders_mid
-
-    # Normalize by shoulder width to be camera-distance independent
-    shoulder_width = np.linalg.norm(r_shoulder - l_shoulder) + 1e-8
-    rel_norm = rel / shoulder_width
-
-    # Convert MediaPipe -> Reachy:
-    #   Reachy x (forward) = 1.0 (fixed)
-    #   Reachy y (left)    = -MediaPipe x  (MP x is person's left = robot's right)
-    #   Reachy z (up)      = -MediaPipe y  (MP y is down)
-    robot_x = 1.0
-    robot_y = -rel_norm[0] * SCALE["head"]
-    robot_z = rel_norm[1] * SCALE["head"]
-    looking_at = (robot_x, robot_y, robot_z)
-    return looking_at
 
 
 def compute_gripper(wrist: np.ndarray, finger: np.ndarray, thumb: np.ndarray, isLeft: bool = False) -> float:
@@ -410,8 +454,8 @@ def landmarks_to_robot_angles(row: pd.Series) -> dict:
     angles = {
         # Right arm
         "r_shoulder_pitch": compute_shoulder_pitch(r_shoulder, r_elbow)           * SCALE["shoulder_pitch"],
-        "r_shoulder_roll":  compute_shoulder_roll_right(r_shoulder, r_elbow)      * SCALE["shoulder_roll"],
-        "r_arm_yaw":        compute_arm_yaw(r_shoulder, r_elbow)                  * SCALE["arm_yaw"],
+        "r_shoulder_roll":  compute_shoulder_roll(r_shoulder, r_elbow)            * SCALE["shoulder_roll"],
+        "r_arm_yaw":        compute_arm_axial_rotation(r_shoulder, r_wrist, r_elbow)                     * SCALE["arm_yaw"],
         "r_elbow_pitch":    compute_elbow_pitch(r_shoulder, r_elbow, r_wrist)     * SCALE["elbow_pitch"],
         "r_forearm_yaw":    compute_forearm_yaw(r_shoulder, r_elbow, r_wrist)     * SCALE["forearm_yaw"],
         "r_wrist_pitch":    compute_wrist_pitch(r_shoulder, r_elbow, r_wrist)     * SCALE["wrist_pitch"],
@@ -419,8 +463,8 @@ def landmarks_to_robot_angles(row: pd.Series) -> dict:
         "r_gripper":        compute_gripper(r_wrist, r_finger, r_thumb),
         # Left arm
         "l_shoulder_pitch": compute_shoulder_pitch(l_shoulder, l_elbow)           * SCALE["shoulder_pitch"],
-        "l_shoulder_roll":  compute_shoulder_roll_left(l_shoulder, l_elbow)       * SCALE["shoulder_roll"],
-        "l_arm_yaw":        compute_arm_yaw(l_shoulder, l_elbow)                  * SCALE["arm_yaw"],
+        "l_shoulder_roll":  compute_shoulder_roll(l_shoulder, l_elbow, True)      * SCALE["shoulder_roll"],
+        "l_arm_yaw":        compute_arm_axial_rotation(l_shoulder, l_wrist, l_elbow, True)               * SCALE["arm_yaw"],
         "l_elbow_pitch":    compute_elbow_pitch(l_shoulder, l_elbow, l_wrist)     * SCALE["elbow_pitch"],
         "l_forearm_yaw":    compute_forearm_yaw(l_shoulder, l_elbow, l_wrist)     * SCALE["forearm_yaw"],
         "l_wrist_pitch":    compute_wrist_pitch(l_shoulder, l_elbow, l_wrist)     * SCALE["wrist_pitch"],

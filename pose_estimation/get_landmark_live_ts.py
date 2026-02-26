@@ -44,11 +44,13 @@ JOINTS = {
     "l_wrist":    15,
     "l_finger":   19,
     "l_thumb":    21,
+    "l_hip":      23,
     "r_shoulder": 12,
     "r_elbow":    14,
     "r_wrist":    16,
     "r_finger":   20,
     "r_thumb":    22,
+    "r_hip":      24,
 }
 
 
@@ -125,6 +127,7 @@ def run_motion_recording(model_path: Path, output_path: Path) -> None:
     base_options = python.BaseOptions(model_asset_path=str(model_path))
     options = vision.PoseLandmarkerOptions(
         base_options=base_options,
+        min_tracking_confidence = 0.8,      # default 0.5, with 0.8 you get fewer but more accurate detections
         running_mode=vision.RunningMode.VIDEO,
     )
     detector = vision.PoseLandmarker.create_from_options(options)
