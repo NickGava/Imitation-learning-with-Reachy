@@ -3,7 +3,7 @@ visualize_timeseries.py
 =============================================================================
 Visualizes the landmark time series recorded by pose_estimation.py.
 
-For a given session and gesture_id, produces three figures:
+For a given subject, exercise and video, produces three figures:
   - Pose        : 3D trajectory of 7 body joints (nose, shoulders, elbows, wrists)
   - Right Hand  : 3D trajectory of 5 right hand landmarks
   - Left Hand   : 3D trajectory of 5 left hand landmarks
@@ -13,21 +13,25 @@ Each joint is plotted as a 3D trajectory where:
   - green dot = first frame, red dot = last frame
 
 Figures are saved as PNG in:
-  data/session_XXX/plots/
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/plots/
 
 Usage example:
   python visualize_timeseries.py
-  >>> Session number: 1
-  >>> Gesture ID to visualize: 2
+  >>> Subject number:  1
+  >>> Exercise number: 1
+  >>> Video number:    1
 '''
 
-import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 # Non viene mai chiamato direttamente, ma è necessario per il plotting 3D -- noqa: F401 serve per silenziare il warning
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from matplotlib.gridspec import GridSpec
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from config import DATA_ROOT
 
 # Landmark names
 POSE_JOINTS = [
@@ -46,22 +50,21 @@ HAND_JOINTS = [
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def load_gesture(csv_path, gesture_id):
+def load_csv(csv_path):
     """
-    Loads rows from a CSV file filtered by gesture_id.
+    Loads all rows from a CSV file.
     Returns a DataFrame (empty if not found).
     """
-    if not os.path.exists(csv_path):
+    if not csv_path.exists():
         print(f"[WARNING] File not found: {csv_path}")
         return pd.DataFrame()
 
     df = pd.read_csv(csv_path)
-    gesture = df[df['gesture_id'] == gesture_id].copy()
 
-    if gesture.empty:
-        print(f"[WARNING] gesture_id={gesture_id} not found in {csv_path}")
+    if df.empty:
+        print(f"[WARNING] No data found in {csv_path}")
 
-    return gesture
+    return df
 
 
 def plot_joint_3d(ax, df, joint_name, has_visibility=True):
@@ -118,7 +121,7 @@ def plot_joint_3d(ax, df, joint_name, has_visibility=True):
 # ---------------------------------------------------------------------------
 # Figure builders
 # ---------------------------------------------------------------------------
-def build_pose_figure(df_pose, gesture_id, session_name):
+def build_pose_figure(df_pose, title):
     """
     Creates the pose figure with layout:
         [     nose     ]
@@ -127,10 +130,7 @@ def build_pose_figure(df_pose, gesture_id, session_name):
         [ L_wr ][ R_wr ]
     """
     fig = plt.figure(figsize=(12, 14))
-    fig.suptitle(
-        f"Pose — session: {session_name}  |  gesture_id: {gesture_id}",
-        fontsize=12, fontweight='bold'
-    )
+    fig.suptitle(f"Pose — {title}", fontsize=12, fontweight='bold')
 
     gs = GridSpec(4, 2, figure=fig, hspace=0.55, wspace=0.35)
 
@@ -152,17 +152,14 @@ def build_pose_figure(df_pose, gesture_id, session_name):
     return fig
 
 
-def build_hand_figure(df_hand, hand_side, gesture_id, session_name):
+def build_hand_figure(df_hand, hand_side, title):
     """
     Creates a hand figure with layout:
         [ thumb_tip ][ index_tip ]  (row 0, 2 plots centered)
         [ wrist ][ index_mcp ][ pinky_mcp ]  (row 1, 3 plots)
     """
     fig = plt.figure(figsize=(14, 8))
-    fig.suptitle(
-        f"{hand_side} — session: {session_name}  |  gesture_id: {gesture_id}",
-        fontsize=12, fontweight='bold'
-    )
+    fig.suptitle(f"{hand_side} — {title}", fontsize=12, fontweight='bold')
 
     # Use a 2x6 grid so we can center the 2 plots on row 0
     gs = GridSpec(2, 6, figure=fig, hspace=0.5, wspace=0.45)
@@ -190,43 +187,49 @@ def main():
     # --- User input ---
     print("=== Time Series Visualizer ===")
     try:
-        session_num = int(input("Session number: ").strip())
-        gesture_id  = int(input("Gesture ID to visualize: ").strip())
+        subject_num  = int(input("Subject number:  ").strip())
+        exercise_num = int(input("Exercise number: ").strip())
+        video_num    = int(input("Video number:    ").strip())
     except ValueError:
-        print("Error: both values must be integers.")
+        print("Error: all values must be integers.")
         return
 
-    session_name = f"session_{session_num:03d}"
-    session = os.path.join("data", session_name)
+    subject_name  = f"subject_{subject_num:03d}"
+    exercise_name = f"exercise_{exercise_num:03d}"
+    video_name    = f"video_{video_num:03d}"
+
+    landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
+
+    title = f"{subject_name} / {exercise_name} / {video_name}"
 
     # --- Load data ---
-    df_pose = load_gesture(os.path.join(session, 'pose.csv'), gesture_id)
-    df_rhand = load_gesture(os.path.join(session, 'right_hand.csv'), gesture_id)
-    df_lhand = load_gesture(os.path.join(session, 'left_hand.csv'), gesture_id)
+    df_pose  = load_csv(landmarks_folder / 'pose.csv')
+    df_rhand = load_csv(landmarks_folder / 'right_hand.csv')
+    df_lhand = load_csv(landmarks_folder / 'left_hand.csv')
 
     if df_pose.empty and df_rhand.empty and df_lhand.empty:
-        print("No data found. Check the session path and gesture_id.")
+        print("No data found. Check subject, exercise and video numbers.")
         return
 
     # --- Build and save figures ---
-    output_dir = os.path.join(session, 'plots')
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = landmarks_folder / 'plots'
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     if not df_pose.empty:
-        fig_pose = build_pose_figure(df_pose, gesture_id, session_name)
-        path_pose = os.path.join(output_dir, f'pose_gesture_{gesture_id}.png')
+        fig_pose = build_pose_figure(df_pose, title)
+        path_pose = output_dir / 'pose.png'
         fig_pose.savefig(path_pose, dpi=150, bbox_inches='tight')
         print(f"Saved: {path_pose}")
 
     if not df_rhand.empty:
-        fig_rhand = build_hand_figure(df_rhand, 'Right Hand', gesture_id, session_name)
-        path_rhand = os.path.join(output_dir, f'right_hand_gesture_{gesture_id}.png')
+        fig_rhand = build_hand_figure(df_rhand, 'Right Hand', title)
+        path_rhand = output_dir / 'right_hand.png'
         fig_rhand.savefig(path_rhand, dpi=150, bbox_inches='tight')
         print(f"Saved: {path_rhand}")
 
     if not df_lhand.empty:
-        fig_lhand = build_hand_figure(df_lhand, 'Left Hand', gesture_id, session_name)
-        path_lhand = os.path.join(output_dir, f'left_hand_gesture_{gesture_id}.png')
+        fig_lhand = build_hand_figure(df_lhand, 'Left Hand', title)
+        path_lhand = output_dir / 'left_hand.png'
         fig_lhand.savefig(path_lhand, dpi=150, bbox_inches='tight')
         print(f"Saved: {path_lhand}")
 

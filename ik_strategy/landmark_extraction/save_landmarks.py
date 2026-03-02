@@ -4,7 +4,7 @@ save_landmarks.py
 Handles CSV initialization and per-frame landmark saving for a recording
 session.
 
-Three CSV files are created per session:
+Three CSV files are created per video:
   - pose.csv       : world-space coordinates (meters, origin between hips)
                      of 9 body joints + visibility score
   - right_hand.csv : normalized coordinates of 5 right hand landmarks
@@ -12,17 +12,21 @@ Three CSV files are created per session:
 
 Each row represents one frame and includes:
   - frame index and timestamp (seconds since epoch)
-  - gesture_id  : incremented at each new recording (0 = idle)
-  - gesture     : binary flag (0 = idle, 1 = recording active)
+
+Each video corresponds to a single movement — the context (subject, exercise,
+video) is encoded in the folder path, not in the CSV columns.
 
 Rows with missing landmarks (landmark not detected) are written with only
-the metadata columns (frame, timestamp, gesture_id, gesture) and no
-coordinates — these incomplete rows are discarded in the data cleaning phase.
+the metadata columns (frame, timestamp) and no coordinates — these incomplete
+rows are discarded in the data cleaning phase.
 '''
 
 import csv
-import os
 import time
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Relevant landmark indices 
@@ -50,11 +54,11 @@ HAND_INDICES = {
 # ---------------------------------------------------------------------------
 # Header CSV
 # ---------------------------------------------------------------------------
-POSE_HEADER = ['frame', 'timestamp', 'gesture_id', 'gesture']
+POSE_HEADER = ['frame', 'timestamp']
 for name in POSE_INDICES:
     POSE_HEADER += [f'{name}_x', f'{name}_y', f'{name}_z', f'{name}_vis']
 
-HAND_HEADER = ['frame', 'timestamp', 'gesture_id', 'gesture']
+HAND_HEADER = ['frame', 'timestamp']
 for name in HAND_INDICES:
     HAND_HEADER += [f'{name}_x', f'{name}_y', f'{name}_z']
 
@@ -62,23 +66,25 @@ for name in HAND_INDICES:
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
-def init_csv_files(session_folder):
+def init_csv_files(video_folder):
     """
-    Creates the session folder and initializes the three CSV files with headers.
+    Creates the video folder and initializes the three CSV files with headers.
     Returns a dict with the file paths.
 
     Parameters:
-        session_folder (str): folder path where to save the CSV file - es. "data/session_001"
+        video_folder (str): folder path where to save the CSV files,
+                            e.g. "data/landmarks/subject_001/exercise_001/video_001"
 
     Returns:
         dict: {'pose': str, 'right_hand': str, 'left_hand': str}
     """
-    os.makedirs(session_folder, exist_ok=True)
+    video_folder = Path(video_folder)
+    video_folder.mkdir(parents=True, exist_ok=True)
 
     paths = {
-        'pose': os.path.join(session_folder, 'pose.csv'),
-        'right_hand': os.path.join(session_folder, 'right_hand.csv'),
-        'left_hand': os.path.join(session_folder, 'left_hand.csv'),
+        'pose':       video_folder / 'pose.csv',
+        'right_hand': video_folder / 'right_hand.csv',
+        'left_hand':  video_folder / 'left_hand.csv',
     }
 
     with open(paths['pose'], 'w', newline='') as f:
@@ -90,39 +96,36 @@ def init_csv_files(session_folder):
     with open(paths['left_hand'], 'w', newline='') as f:
         csv.writer(f).writerow(HAND_HEADER)
 
-    print(f"[save_landmarks] Session initialized in: {session_folder}")
+    print(f"[save_landmarks] Initialized in: {video_folder}")
     return paths
 
 
-def save_frame(results, frame_idx, csv_paths, gesture_id, gesture_active):
+def save_frame(results, frame_idx, csv_paths):
     """
     Saves the landmarks of a single frame into the respective CSV files.
     Uses pose_world_landmarks (coordinates in meters, origin between hips).
-    If a landmark is not detected, writes a row with only frame_idx, gesture_id, gesture
+    If a landmark is not detected, writes a row with only frame and timestamp
     (empty row = frame to discard in the data cleaning phase).
 
     Parameters:
-        results:         object returned by holistic.process()
-        frame_idx:       integer index of the current frame
-        csv_paths:       returned dict from init_csv_files()
-        gesture_id:      integer counter incremented at each new gesture recording
-        gesture_active:  bool, True if gesture recording is active (S pressed)
+        results:     object returned by holistic.process()
+        frame_idx:   integer index of the current frame
+        csv_paths:   returned dict from init_csv_files()
     """
-    gesture_flag = 1 if gesture_active else 0       # binary flag: 0 = idle, 1 = recording gesture
-    timestamp = time.time()                         # seconds since epoch, e.g. 1709123456.789
+    timestamp = time.time()     # seconds since epoch, e.g. 1709123456.789
 
     # --- POSE ---
     with open(csv_paths['pose'], 'a', newline='') as f:
         writer = csv.writer(f)
         if results.pose_world_landmarks:
             lms = results.pose_world_landmarks.landmark
-            row = [frame_idx, timestamp, gesture_id, gesture_flag]
+            row = [frame_idx, timestamp]
             for idx in POSE_INDICES.values():
                 lm = lms[idx]
                 row += [lm.x, lm.y, lm.z, lm.visibility]
             writer.writerow(row)
         else:
-            writer.writerow([frame_idx, timestamp, gesture_id, gesture_flag])  # frame not detected
+            writer.writerow([frame_idx, timestamp])     # frame not detected
 
     # --- HANDS ---
     for side, key in [('right_hand_landmarks', 'right_hand'),
@@ -132,10 +135,10 @@ def save_frame(results, frame_idx, csv_paths, gesture_id, gesture_active):
             hand = getattr(results, side)
             if hand:
                 lms = hand.landmark
-                row = [frame_idx, timestamp, gesture_id, gesture_flag]
+                row = [frame_idx, timestamp]
                 for idx in HAND_INDICES.values():
                     lm = lms[idx]
                     row += [lm.x, lm.y, lm.z]
                 writer.writerow(row)
             else:
-                writer.writerow([frame_idx, timestamp, gesture_id, gesture_flag])  # hand not detected
+                writer.writerow([frame_idx, timestamp])     # hand not detected

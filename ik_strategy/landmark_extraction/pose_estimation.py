@@ -3,27 +3,32 @@ pose_estimation.py
 =============================================================================
 Main entry point for the landmark extraction pipeline.
 
-Opens the webcam, runs MediaPipe Holistic on each frame and saves the
+Loads a video file, runs MediaPipe Holistic on each frame and saves the
 detected landmarks to CSV via save_landmarks.py.
 
 Controls:
-  S  — start recording a gesture  (gesture_id incremented automatically)
-  E  — stop  recording the gesture
-  Q  — quit the session
+  P  — pause / resume
+  Q  — quit
 
-While idle all frames are still saved (gesture = 0) so the full session
-timeline is preserved. Only the frames flagged with gesture = 1 will be
-used for training.
+Every frame is processed and saved — each video corresponds to a single
+movement, so no gesture marking is needed.
+
+Input:
+  data/raw_data/subject_XXX/exercise_XXX/video_XXX.mp4
 
 Output:
-  data/session_XXX/pose.csv
-  data/session_XXX/right_hand.csv
-  data/session_XXX/left_hand.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/right_hand.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/left_hand.csv
 '''
 
 import cv2
 import mediapipe as mp
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from config import DATA_ROOT
 from save_landmarks import init_csv_files, save_frame
 
 # Setup MediaPipe Holistic
@@ -31,13 +36,16 @@ mp_holistic = mp.solutions.holistic
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
+# Display window width in pixels — height is scaled automatically to keep aspect ratio
+DISPLAY_WIDTH = 800
 
-# Function to draw landmarks on the frame (for visualization)
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def draw_landmarks(image, results):
     """
     Draws only pose and hand landmarks on the frame (no face).
     """
-    # Pose
     if results.pose_landmarks:
         mp_drawing.draw_landmarks(
             image,
@@ -46,7 +54,6 @@ def draw_landmarks(image, results):
             landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
         )
 
-    # Right hand
     if results.right_hand_landmarks:
         mp_drawing.draw_landmarks(
             image,
@@ -56,7 +63,6 @@ def draw_landmarks(image, results):
             mp_drawing_styles.get_default_hand_connections_style()
         )
 
-    # Left hand
     if results.left_hand_landmarks:
         mp_drawing.draw_landmarks(
             image,
@@ -68,80 +74,102 @@ def draw_landmarks(image, results):
 
     return image
 
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    cap = cv2.VideoCapture(0)  # 0 = default webcam
-
-    if not cap.isOpened():
-        print("Error: cannot open webcam.")
+    # --- User input ---
+    try:
+        subject_num  = int(input("Subject number:  ").strip())
+        exercise_num = int(input("Exercise number: ").strip())
+        video_num    = int(input("Video number:    ").strip())
+    except ValueError:
+        print("Error: all values must be integers.")
         return
 
-    # Initialization CSV for current session
-    csv_paths = init_csv_files("data/session_001")
+    subject_name  = f"subject_{subject_num:03d}"
+    exercise_name = f"exercise_{exercise_num:03d}"
+    video_name    = f"video_{video_num:03d}"
+
+    video_path = DATA_ROOT / "raw_data" / subject_name / exercise_name / f"{video_name}.mp4"
+
+    if not video_path.exists():
+        print(f"Error: video not found at {video_path}")
+        return
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print(f"Error: cannot open video {video_path}")
+        return
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"Video loaded: {video_path}  ({total_frames} frames @ {fps:.1f} fps)")
+
+    # Initialize CSV files for this video
+    landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
+    csv_paths = init_csv_files(landmarks_folder)
+
     frame_idx = 0
+    paused    = False
 
-    # Gesture recording state
-    gesture_active = False  # True while recording a gesture (S pressed, E not yet pressed)
-    gesture_id = 0          # incremented at each new gesture recording
-
-    print("Webcam started. Press 'S' to start recording, 'E' to stop, 'Q' to quit.")
+    print("Press 'P' to pause/resume, 'Q' to quit.")
 
     with mp_holistic.Holistic(
-        min_detection_confidence=0.5,   # soglia di confidenza per rilevamento iniziale 
-        min_tracking_confidence=0.5,    # soglia di confidenza per tracking continuo (dopo il ril. iniziale usa un tracker leggero,
-                                        # se il tracking fallisce, cioè è sotto questa soglia torna al rilevamento completo)
-        model_complexity=1  # 0=lite, 1=full, 2=heavy
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,    # se il tracking scende sotto questa soglia,
+                                        # MediaPipe rilancia il rilevamento completo
+        model_complexity=1              # 0=lite, 1=full, 2=heavy
     ) as holistic:
 
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("Error: frame not received.")
-                break
 
-            # MediaPipe works in RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame_rgb.flags.writeable = False               # Impostare il frame come non scrivibile prima di passarlo a MediaPipe serve a evitare una copia interna dei dati in memoria 
+            if not paused:
+                ret, frame = cap.read()
+                if not ret:
+                    print("Video ended.")
+                    break
 
-            results = holistic.process(frame_rgb)           # Restituisce un oggetto con i landmark rilevati (pose_landmarks, right_hand_landmarks, left_hand_landmarks, face_landmarks)
+                # MediaPipe works in RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_rgb.flags.writeable = False       # avoids internal memory copy
 
-            frame_rgb.flags.writeable = True
-            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+                results = holistic.process(frame_rgb)   # restituisce pose, mani, viso
 
-            # Saves the frame landmarks into the CSV files.
-            save_frame(results, frame_idx, csv_paths, gesture_id, gesture_active)
-            frame_idx += 1
+                frame_rgb.flags.writeable = True
+                frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
-            # Draw landmarks on the frame
-            frame_bgr = draw_landmarks(frame_bgr, results)
+                save_frame(results, frame_idx, csv_paths)
+                frame_idx += 1
 
-            # Show info on the frame
-            rec_color = (0, 0, 255) if gesture_active else (0, 255, 0)
-            rec_label = f"REC gesture_id={gesture_id}" if gesture_active else "IDLE  (S=start)"
-            cv2.putText(frame_bgr, rec_label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, rec_color, 2)
-            cv2.putText(frame_bgr, f"Frame: {frame_idx}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                frame_bgr = draw_landmarks(frame_bgr, results)
 
-            cv2.imshow("Reachy - Landmark Extraction", frame_bgr)
+            # HUD
+            pause_label = "[PAUSED]" if paused else ""
+            cv2.putText(frame_bgr, f"Frame: {frame_idx} / {total_frames}" + pause_label,
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame_bgr, f"{subject_name} / {exercise_name} / {video_name}",
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-            key = cv2.waitKey(1) & 0xFF         # restituisce il codice ASCII del tasto premuto (-1 se nessun tasto premuto), & 0xFF maschera per limitare il valore a 8 bit (0-255)
+            # Show processing video
+            h, w = frame_bgr.shape[:2]
+            display = cv2.resize(frame_bgr, (DISPLAY_WIDTH, int(h * DISPLAY_WIDTH / w)))
+            cv2.imshow("Reachy - Landmark Extraction", display)
 
-            if key == ord('s') and not gesture_active:
-                gesture_active = True
-                gesture_id += 1
-                print(f"[REC] Started gesture_id={gesture_id}")
+            # waitKey(1) when playing, waitKey(0) when paused (blocks until keypress)
+            key = cv2.waitKey(1 if not paused else 0) & 0xFF
 
-            elif key == ord('e') and gesture_active:
-                gesture_active = False
-                print(f"[REC] Stopped gesture_id={gesture_id}")
+            if key == ord('p'):
+                paused = not paused
+                print("[PAUSED]" if paused else "[RESUMED]")
 
             elif key == ord('q'):
                 break
 
     cap.release()
     cv2.destroyAllWindows()
-    print(f"Session ended. Total frames saved: {frame_idx}  |  Gestures recorded: {gesture_id}")
+    print(f"Done. Frames processed: {frame_idx} / {total_frames}")
 
 
 if __name__ == "__main__":
