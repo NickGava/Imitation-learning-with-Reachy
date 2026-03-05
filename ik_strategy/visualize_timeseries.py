@@ -28,9 +28,6 @@ import matplotlib.pyplot as plt
 # Non viene mai chiamato direttamente, ma è necessario per il plotting 3D -- noqa: F401 serve per silenziare il warning
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from matplotlib.gridspec import GridSpec
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import DATA_ROOT
 
 # Landmark names

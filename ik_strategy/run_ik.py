@@ -1,0 +1,351 @@
+'''
+run_ik.py  (v2)
+=============================================================================
+Offline IK solver with dual constraint: wrist + elbow.
+
+No ikpy, no Unity — pure numpy FK derived directly from reachy.URDF.
+
+FK chain per arm (joint name : origin_xyz : rotation_axis):
+  shoulder_pitch : (0, ∓0.19, 0)  : Y   ← offset is -0.19 right, +0.19 left
+  shoulder_roll  : (0,  0,    0)   : X
+  arm_yaw        : (0,  0,    0)   : Z
+  elbow_pitch    : (0,  0,  -0.28) : Y   ← ELBOW position read here
+  forearm_yaw    : (0,  0,    0)   : Z
+  wrist_pitch    : (0,  0,  -0.25) : Y   ← WRIST position read here
+  wrist_roll     : (0,  0,  -0.0325): X  ← end-effector orientation read here
+
+Differences from v1:
+  - Fully offline — no Unity / ReachySDK required
+  - Elbow position constrained → arm shape matches the human demonstration
+  - scipy L-BFGS-B with warm start from previous frame
+
+Input:
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_mapped.csv
+
+Output:
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_ik.csv
+  (same column format as v1 — run_simulation.py works unchanged)
+'''
+
+import argparse
+import sys
+import numpy as np
+import pandas as pd
+import scipy.optimize as opt
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parent))
+from config import DATA_ROOT
+
+
+# ---------------------------------------------------------------------------
+# FK geometry — read from reachy.URDF
+# ---------------------------------------------------------------------------
+# Each entry: (translation_xyz, rotation_axis)
+# Translation is the joint origin relative to its parent link.
+# Axis is the unit vector around which the joint rotates.
+#
+# Right arm shoulder offset: y = -0.19  (robot right side)
+# Left  arm shoulder offset: y = +0.19  (robot left  side)
+
+_FK_JOINTS = [
+    # name            translation           axis
+    ('shoulder_pitch', None,                 np.array([0., 1., 0.])),  # translation set per side
+    ('shoulder_roll',  np.array([0., 0., 0.]),   np.array([1., 0., 0.])),
+    ('arm_yaw',        np.array([0., 0., 0.]),   np.array([0., 0., 1.])),
+    ('elbow_pitch',    np.array([0., 0., -0.28]),np.array([0., 1., 0.])),  # ← elbow
+    ('forearm_yaw',    np.array([0., 0., 0.]),   np.array([0., 0., 1.])),
+    ('wrist_pitch',    np.array([0., 0., -0.25]),np.array([0., 1., 0.])),  # ← wrist pos
+    ('wrist_roll',     np.array([0., 0., -0.0325]),np.array([1., 0., 0.])),# ← wrist ori
+]
+
+# Indices in the joint chain for elbow and wrist positions
+_ELBOW_JOINT_IDX = 3   # after elbow_pitch
+_WRIST_POS_IDX   = 5   # after wrist_pitch  (position target)
+_WRIST_ORI_IDX   = 6   # after wrist_roll   (orientation target)
+
+SHOULDER_Y_OFFSET = {
+    'right': -0.19,
+    'left':   0.19,
+}
+
+
+# ---------------------------------------------------------------------------
+# Reachy joint constants
+# ---------------------------------------------------------------------------
+JOINT_NAMES = [
+    'shoulder_pitch', 'shoulder_roll', 'arm_yaw',
+    'elbow_pitch', 'forearm_yaw', 'wrist_pitch', 'wrist_roll',
+]
+
+JOINT_LIMITS_DEG = {
+    'right': np.array([
+        [-150,  90],    # shoulder_pitch
+        [-180,  10],    # shoulder_roll
+        [ -90,  90],    # arm_yaw
+        [-125,   0],    # elbow_pitch
+        [-100, 100],    # forearm_yaw
+        [ -45,  45],    # wrist_pitch
+        [ -55,  35],    # wrist_roll
+    ], dtype=float),
+    'left': np.array([
+        [-150,  90],
+        [ -10, 180],
+        [ -90,  90],
+        [-125,   0],
+        [-100, 100],
+        [ -45,  45],
+        [ -35,  55],
+    ], dtype=float),
+}
+
+REST_DEG = {
+    'right': np.array([0., -5., 0., -90., 0., 0., 0.]),
+    'left':  np.array([0.,  5., 0., -90., 0., 0., 0.]),
+}
+
+# ---------------------------------------------------------------------------
+# Loss weights — tune if elbow/wrist tradeoff needs adjustment
+# ---------------------------------------------------------------------------
+W_WRIST_POS = 1.0
+W_ELBOW_POS = 0.8
+W_WRIST_ORI = 0.2
+W_SMOOTH    = 0.05
+
+# ---------------------------------------------------------------------------
+# Output format (identical to v1)
+# ---------------------------------------------------------------------------
+_ARM_IK_COLS = JOINT_NAMES + ['gripper']
+ARMS_IK_HEADER = (
+    ['frame', 'timestamp']
+    + [f'r_{c}' for c in _ARM_IK_COLS]
+    + [f'l_{c}' for c in _ARM_IK_COLS]
+)
+
+
+# ---------------------------------------------------------------------------
+# Pure numpy forward kinematics
+# ---------------------------------------------------------------------------
+def _rot(axis: np.ndarray, angle_rad: float) -> np.ndarray:
+    """
+    Rodrigues rotation matrix: rotate by angle_rad around unit vector axis.
+    Returns a 3×3 matrix.
+    """
+    c, s = np.cos(angle_rad), np.sin(angle_rad)
+    x, y, z = axis
+    return np.array([
+        [c + x*x*(1-c),     x*y*(1-c) - z*s,  x*z*(1-c) + y*s],
+        [y*x*(1-c) + z*s,   c + y*y*(1-c),    y*z*(1-c) - x*s],
+        [z*x*(1-c) - y*s,   z*y*(1-c) + x*s,  c + z*z*(1-c)  ],
+    ])
+
+
+def fk(q_rad: np.ndarray, side: str):
+    """
+    Forward kinematics for one arm.
+
+    Parameters:
+        q_rad : (7,) joint angles in radians, order = JOINT_NAMES
+        side  : 'right' or 'left'
+
+    Returns:
+        elbow_pos (3,)  — position of elbow in torso frame
+        wrist_pos (3,)  — position of wrist in torso frame
+        wrist_R   (3,3) — rotation matrix of end-effector in torso frame
+    """
+    # Homogeneous transform, starts at torso origin
+    T = np.eye(4)
+
+    elbow_pos = None
+    wrist_pos = None
+    wrist_R   = None
+
+    for i, (_, trans, axis) in enumerate(_FK_JOINTS):
+        # Shoulder translation depends on side
+        if i == 0:
+            trans = np.array([0., SHOULDER_Y_OFFSET[side], 0.])
+
+        # Apply translation
+        T[:3, 3] += T[:3, :3] @ trans
+
+        # Apply rotation
+        R = _rot(axis, q_rad[i])
+        T[:3, :3] = T[:3, :3] @ R
+
+        # Record positions at key frames
+        if i == _ELBOW_JOINT_IDX:
+            elbow_pos = T[:3, 3].copy()
+        if i == _WRIST_POS_IDX:
+            wrist_pos = T[:3, 3].copy()
+        if i == _WRIST_ORI_IDX:
+            wrist_R = T[:3, :3].copy()
+
+    return elbow_pos, wrist_pos, wrist_R
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _quat_to_R(q: np.ndarray) -> np.ndarray:
+    """Unit quaternion [w, x, y, z] → 3×3 rotation matrix."""
+    w, x, y, z = q / np.linalg.norm(q)
+    return np.array([
+        [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
+        [2*(x*y+z*w),   1-2*(x*x+z*z), 2*(y*z-x*w)],
+        [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)],
+    ])
+
+
+def _cost(q, side, target_elbow, target_wrist, target_R, prev_q):
+    """Scalar cost for a candidate joint configuration q (radians)."""
+    elbow_fk, wrist_fk, R_fk = fk(q, side)
+
+    e_wrist_pos = np.sum((wrist_fk - target_wrist) ** 2)
+    e_elbow_pos = np.sum((elbow_fk - target_elbow) ** 2)
+    e_ori       = np.sum((R_fk     - target_R)     ** 2)
+    e_smooth    = np.sum((q        - prev_q)        ** 2)
+
+    return (
+        W_WRIST_POS * e_wrist_pos
+        + W_ELBOW_POS * e_elbow_pos
+        + W_WRIST_ORI * e_ori
+        + W_SMOOTH    * e_smooth
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-arm IK loop
+# ---------------------------------------------------------------------------
+def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
+    """
+    Optimises joint angles for every frame of one arm.
+    Returns (N, 8): 7 joint angles [deg] + gripper angle [deg].
+    """
+    limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side])
+    prev_q     = np.deg2rad(REST_DEG[side])
+
+    n_frames = len(df)
+    out      = np.zeros((n_frames, 8))
+    n_warn   = 0
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        p = prefix
+
+        target_elbow = np.array([row[f'{p}_elbow_x'], row[f'{p}_elbow_y'], row[f'{p}_elbow_z']])
+        target_wrist = np.array([row[f'{p}_wrist_x'], row[f'{p}_wrist_y'], row[f'{p}_wrist_z']])
+        q_quat       = np.array([row[f'{p}_q_w'], row[f'{p}_q_x'], row[f'{p}_q_y'], row[f'{p}_q_z']])
+        target_R     = _quat_to_R(q_quat)
+
+        result = opt.minimize(
+            _cost,
+            x0      = prev_q,
+            args    = (side, target_elbow, target_wrist, target_R, prev_q),
+            method  = 'L-BFGS-B',
+            bounds  = limits_rad,
+            options = {'maxiter': 300, 'ftol': 1e-9},
+        )
+
+        if result.success or result.fun < 1e-4:
+            q_opt = result.x
+        else:
+            n_warn += 1
+            print(f"  ⚠  frame {int(row['frame'])}: did not converge "
+                  f"(cost={result.fun:.5f}) — keeping previous angles")
+            q_opt = prev_q
+
+        prev_q     = q_opt
+        out[i, :7] = np.rad2deg(q_opt)
+        out[i,  7] = row[f'{p}_gripper_angle']
+
+        if (i + 1) % 100 == 0:
+            print(f"    frame {i+1:4d} / {n_frames}")
+
+    if n_warn:
+        print(f"  Convergence warnings: {n_warn} / {n_frames}")
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(
+        description="Offline IK solver — elbow + wrist dual constraint, pure numpy FK."
+    )
+    parser.add_argument('--subject',  type=int, default=None)
+    parser.add_argument('--exercise', type=int, default=None)
+    parser.add_argument('--video',    type=int, default=None)
+    parser.add_argument('--test-fk',  action='store_true',
+                        help='Run a quick FK sanity check at rest pose and exit.')
+    args = parser.parse_args()
+
+    # --- FK sanity check ---
+    if args.test_fk:
+        for side in ('right', 'left'):
+            q_rest = np.deg2rad(REST_DEG[side])
+            elbow, wrist, R = fk(q_rest, side)
+            print(f"{side} arm at rest pose:")
+            print(f"  elbow : {elbow}")
+            print(f"  wrist : {wrist}")
+            print(f"  R tip :\n{R}\n")
+        return
+
+    # --- Video ID ---
+    try:
+        subject_num  = args.subject  if args.subject  is not None else int(input("Subject number:  ").strip())
+        exercise_num = args.exercise if args.exercise is not None else int(input("Exercise number: ").strip())
+        video_num    = args.video    if args.video    is not None else int(input("Video number:    ").strip())
+    except ValueError:
+        print("Error: all values must be integers.")
+        return
+
+    subject_name  = f"subject_{subject_num:03d}"
+    exercise_name = f"exercise_{exercise_num:03d}"
+    video_name    = f"video_{video_num:03d}"
+    folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
+
+    if not folder.is_dir():
+        print(f"Error: folder not found → {folder}")
+        return
+
+    mapped_path = folder / "arms_mapped.csv"
+    if not mapped_path.exists():
+        print(f"Error: arms_mapped.csv not found → {mapped_path}")
+        return
+
+    df = pd.read_csv(mapped_path)
+    print(f"Loaded {len(df)} frames from {mapped_path}\n")
+
+    # --- Run IK per arm ---
+    results = {}
+    for side, prefix in [('right', 'r'), ('left', 'l')]:
+        print(f"=== {side} arm ===")
+        wrist_col = f"{prefix}_wrist_x"
+
+        if wrist_col not in df.columns or df[wrist_col].isna().all():
+            print(f"  [SKIP] No data for {side} arm.\n")
+            results[side] = None
+            continue
+
+        results[side] = _run_ik_arm(df, prefix, side)
+        print(f"  IK complete.\n")
+
+    # --- Assemble output ---
+    out_rows = []
+    for i, (_, row) in enumerate(df.iterrows()):
+        r = [int(row['frame']), row['timestamp']]
+        for side in ('right', 'left'):
+            r += list(results[side][i]) if results[side] is not None else [np.nan] * 8
+        out_rows.append(r)
+
+    df_out = pd.DataFrame(out_rows, columns=ARMS_IK_HEADER)
+    output_path = folder / "arms_ik.csv"
+    df_out.to_csv(output_path, index=False)
+
+    print(f"Saved {len(df_out)} rows → {output_path}")
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

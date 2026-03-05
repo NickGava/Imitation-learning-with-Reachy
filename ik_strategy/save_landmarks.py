@@ -23,9 +23,6 @@ rows are discarded in the data cleaning phase.
 
 import csv
 import time
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from pathlib import Path
 
 # ---------------------------------------------------------------------------

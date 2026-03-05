@@ -24,10 +24,6 @@ Output:
 
 import cv2
 import mediapipe as mp
-
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import DATA_ROOT
 from save_landmarks import init_csv_files, save_frame
 

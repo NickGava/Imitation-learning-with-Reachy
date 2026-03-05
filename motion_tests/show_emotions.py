@@ -7,10 +7,14 @@ print("Connessione a Reachy...")
 reachy = ReachySDK(host="localhost")
 
 if reachy.r_arm is None or reachy.l_arm is None:
-    print("❌ Braccia non disponibili (Unity in Play?)")
+    print("❌ Impossible to connect")
     exit()
 
-print("✅ Connessione OK")
+print("✅ Connection OK")
+
+reachy.turn_on('r_arm')
+reachy.turn_on('l_arm')
+reachy.turn_on('head')
 
 
 head = reachy.head
@@ -51,15 +55,15 @@ def be_happy():
         time.sleep(0.3)
     
     # Return arms to neutral position
-    goto(
-        goal_positions={reachy.r_arm.r_shoulder_pitch: 0,
-                        reachy.l_arm.l_shoulder_pitch: 0,
-                        reachy.r_arm.r_shoulder_roll: 0,
-                        reachy.l_arm.l_shoulder_roll: 0
-                        },
-        duration=1.0,
-        interpolation_mode=InterpolationMode.MINIMUM_JERK
-    )
+    # goto(
+    #     goal_positions={reachy.r_arm.r_shoulder_pitch: 0,
+    #                     reachy.l_arm.l_shoulder_pitch: 0,
+    #                     reachy.r_arm.r_shoulder_roll: 0,
+    #                     reachy.l_arm.l_shoulder_roll: 0
+    #                     },
+    #     duration=1.0,
+    #     interpolation_mode=InterpolationMode.MINIMUM_JERK
+    # )
     
     
 be_happy()
@@ -75,3 +79,7 @@ goto(
     interpolation_mode=InterpolationMode.MINIMUM_JERK
 )
 
+
+reachy.turn_off_smoothly('r_arm')
+reachy.turn_off_smoothly('l_arm')
+reachy.turn_off_smoothly('head')

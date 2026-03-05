@@ -7,12 +7,13 @@ print("Connessione a Reachy...")
 reachy = ReachySDK(host="localhost")
 
 if reachy.r_arm is None or reachy.l_arm is None:
-    print("❌ Braccia non disponibili (Unity in Play?)")
+    print("❌ Impossible to connect")
     exit()
 
-print("✅ Connessione OK")
+print("✅ Connection OK")
 
 #print(reachy.head)
+reachy.turn_on('head')
 
 head = reachy.head
 
@@ -22,4 +23,6 @@ head.look_at(0.5, -0.6, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JER
 head.look_at(0.5, 0, -0.6, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)      # look down
 head.look_at(0.5, 0, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)         # look center
 
+
+reachy.turn_off_smoothly('head')
 

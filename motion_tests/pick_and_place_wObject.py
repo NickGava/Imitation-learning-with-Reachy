@@ -8,6 +8,12 @@ import numpy as np
 # Connessione a Reachy
 reachy = ReachySDK(host='localhost')  # oppure IP del robot
 
+if reachy.r_arm is None or reachy.l_arm is None:
+    print("❌ Impossible to connect")
+    exit()
+
+print("✅ Connection OK")
+
 first_pos = {
     reachy.r_arm.r_elbow_pitch: -120,
     reachy.r_arm.r_shoulder_pitch: 70,

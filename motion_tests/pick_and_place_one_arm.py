@@ -13,18 +13,21 @@ print("Connessione a Reachy...")
 reachy = ReachySDK(host="localhost")
 
 if reachy.r_arm is None or reachy.l_arm is None:
-    print("❌ Braccia non disponibili (Unity in Play?)")
+    print("❌ Impossible to connect")
     exit()
 
-print("✅ Connessione OK")
+print("✅ Connection OK")
+
+reachy.turn_on('r_arm')
 
 dx = reachy.r_arm
 sx = reachy.l_arm
 
 # Neutral position
-neutral_pos = {joint.name: 0.0 for joint in reachy.joints.values()}
+# neutral_pos = {joint.name: 0.0 for joint in reachy.joints.values()}
 
 # Pick position
+# ----------------- TO SET BEFORE USING WITH REAL ROBOT ------------------
 pick_pos = {
     "r_shoulder_pitch": -50,
     "r_shoulder_roll": -20,
@@ -48,7 +51,7 @@ place_pos = {
 # Convert positions to joint objects so that function goto is happy
 pick_pos_joints = {getattr(reachy.joints, name): val for name, val in pick_pos.items()}
 place_pos_joints = {getattr(reachy.joints, name): val for name, val in place_pos.items()}
-neutral_pos_joints = {getattr(reachy.joints, name): val for name, val in neutral_pos.items()}
+# neutral_pos_joints = {getattr(reachy.joints, name): val for name, val in neutral_pos.items()}
 
 stop_follow = threading.Event()     # Initialization of event to signal the head following thread to stop
 
@@ -70,7 +73,7 @@ dx.r_gripper.goal_position = 20
 time.sleep(1)
 
 # Start gripper following thread
-t =threading.Thread(target = follow_gripper, daemon=True)
+t = threading.Thread(target = follow_gripper, daemon=True)
 t.start()
 
 # Move to place position and open gripper
@@ -81,4 +84,7 @@ time.sleep(2)
 stop_follow.set()       # Signal the head following thread to stop
 
 # Return to neutral position
-goto(goal_positions=neutral_pos_joints, duration=2.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
+# goto(goal_positions=neutral_pos_joints, duration=2.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
+
+
+reachy.turn_off_smoothly('r_arm')

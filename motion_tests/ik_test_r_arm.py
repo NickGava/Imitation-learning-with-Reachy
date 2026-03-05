@@ -9,10 +9,10 @@ print("Connessione a Reachy...")
 reachy = ReachySDK(host="localhost")
 
 if reachy.r_arm is None or reachy.l_arm is None:
-    print("❌ Braccia non disponibili (Unity in Play?)")
+    print("❌ Impossible to connect")
     exit()
 
-print("✅ Connessione OK")
+print("✅ Connection OK")
 
 def unity_to_robot_coords(unity_coords, offset=[0, 0, 0]):
     """
@@ -82,12 +82,12 @@ def get_sphere(x, y, z):
         # Eseguiamo il movimento
         goto(target_position, duration=1.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
         time.sleep(1)  # Aspettiamo che il movimento sia completato
-        p = reachy.r_arm.forward_kinematics()
+        # p = reachy.r_arm.forward_kinematics()
         # print("Posizione finale del gripper:", p[:3, 3])
     else:
         print("Errore: Posizione irraggiungibile!")
 
-get_sphere(-0.3, 0, 0.4)
+get_sphere(-0.3, 0, 0.4)    # (x, y, z) del simulatore
 get_sphere(-0.4, 0.2, 0.5)
 get_sphere(-0.4, -0.2, 0.1)
 get_sphere(-0.2, 0.5, 0.4)

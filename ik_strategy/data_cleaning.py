@@ -22,9 +22,6 @@ and intentional — they preserve traceability to the source video).
 import math
 import numpy as np
 import pandas as pd
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import DATA_ROOT
 
 # ---------------------------------------------------------------------------
@@ -32,7 +29,7 @@ from config import DATA_ROOT
 # ---------------------------------------------------------------------------
 
 # --- Visibility filter (pose only) ---
-MIN_VISIBILITY = 0            # frames where any joint is below this are dropped
+MIN_VISIBILITY = 0.5            # frames where any joint is below this are dropped
 
 # --- Jump detection ---
 JUMP_FACTOR = 5.0               # drop frame if displacement > JUMP_FACTOR × median displacement
