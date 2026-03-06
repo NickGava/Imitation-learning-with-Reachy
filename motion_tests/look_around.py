@@ -4,7 +4,7 @@ from reachy_sdk.trajectory.interpolation import InterpolationMode
 import time
 
 print("Connessione a Reachy...")
-reachy = ReachySDK(host="localhost")
+reachy = ReachySDK(host='10.59.1.20')
 
 if reachy.r_arm is None or reachy.l_arm is None:
     print("❌ Impossible to connect")
@@ -17,10 +17,12 @@ reachy.turn_on('head')
 
 head = reachy.head
 
-head.look_at(0.5, 0.6, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)       # look left
-head.look_at(0.5, 0, 0.6, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)       # look up
-head.look_at(0.5, -0.6, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)      # look right
-head.look_at(0.5, 0, -0.6, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)      # look down
+head.look_at(0.5, 0.5, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)       # look left
+head.look_at(0.5, 0, 0, 1, interpolation_mode=InterpolationMode.MINIMUM_JERK)         # pass through the center
+head.look_at(0.5, 0, 0.4, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)       # look up
+head.look_at(0.5, -0.5, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)      # look right
+head.look_at(0.5, 0, 0, 1, interpolation_mode=InterpolationMode.MINIMUM_JERK)         # pass through the center
+head.look_at(0.5, 0, -0.4, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)      # look down
 head.look_at(0.5, 0, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)         # look center
 
 

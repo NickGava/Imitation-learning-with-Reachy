@@ -10,7 +10,7 @@ import time
 import threading
 
 print("Connessione a Reachy...")
-reachy = ReachySDK(host="localhost")
+reachy = ReachySDK(host="10.59.1.20")
 
 if reachy.r_arm is None or reachy.l_arm is None:
     print("❌ Impossible to connect")
@@ -19,12 +19,21 @@ if reachy.r_arm is None or reachy.l_arm is None:
 print("✅ Connection OK")
 
 reachy.turn_on('r_arm')
+reachy.turn_on('head')
 
 dx = reachy.r_arm
-sx = reachy.l_arm
 
 # Neutral position
-# neutral_pos = {joint.name: 0.0 for joint in reachy.joints.values()}
+neutral_pos = {
+    "r_shoulder_pitch": 0,
+    "r_shoulder_roll": 0,
+    "r_arm_yaw": 0,
+    "r_elbow_pitch": -100,
+    "r_forearm_yaw": 0,
+    "r_gripper": 0,
+    "r_wrist_pitch": 0,
+    "r_wrist_roll": 0
+}
 
 # Pick position
 # ----------------- TO SET BEFORE USING WITH REAL ROBOT ------------------
@@ -32,7 +41,7 @@ pick_pos = {
     "r_shoulder_pitch": -50,
     "r_shoulder_roll": -20,
     "r_arm_yaw": 78,
-    "r_elbow_pitch": -20,
+    "r_elbow_pitch": -90,
     "r_forearm_yaw": -78,
     "r_gripper": -69,
     "r_wrist_pitch": 0,
@@ -51,7 +60,7 @@ place_pos = {
 # Convert positions to joint objects so that function goto is happy
 pick_pos_joints = {getattr(reachy.joints, name): val for name, val in pick_pos.items()}
 place_pos_joints = {getattr(reachy.joints, name): val for name, val in place_pos.items()}
-# neutral_pos_joints = {getattr(reachy.joints, name): val for name, val in neutral_pos.items()}
+neutral_pos_joints = {getattr(reachy.joints, name): val for name, val in neutral_pos.items()}
 
 stop_follow = threading.Event()     # Initialization of event to signal the head following thread to stop
 
@@ -84,7 +93,10 @@ time.sleep(2)
 stop_follow.set()       # Signal the head following thread to stop
 
 # Return to neutral position
-# goto(goal_positions=neutral_pos_joints, duration=2.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
+goto(goal_positions=neutral_pos_joints, duration=2.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
+reachy.head.look_at(0.5, 0, 0, 1.8, interpolation_mode=InterpolationMode.MINIMUM_JERK)         # look center
+
 
 
 reachy.turn_off_smoothly('r_arm')
+reachy.turn_off_smoothly('head')

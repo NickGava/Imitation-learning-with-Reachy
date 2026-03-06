@@ -29,7 +29,7 @@ from config import DATA_ROOT
 # ---------------------------------------------------------------------------
 
 # --- Visibility filter (pose only) ---
-MIN_VISIBILITY = 0.5            # frames where any joint is below this are dropped
+MIN_VISIBILITY = 0            # frames where any joint is below this are dropped
 
 # --- Jump detection ---
 JUMP_FACTOR = 5.0               # drop frame if displacement > JUMP_FACTOR × median displacement
