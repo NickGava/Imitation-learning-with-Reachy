@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 # Connessione a Reachy
-reachy = ReachySDK(host="localhost")  # oppure IP del robot
+reachy = ReachySDK(host="localhost")  # DO NOT USE ON REAL ROBOT
 
 if reachy.l_arm is None or reachy.l_arm is None:
     print("❌ Impossible to connect")

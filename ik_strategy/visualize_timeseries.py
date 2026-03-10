@@ -116,6 +116,36 @@ def plot_joint_3d(ax, df, joint_name, has_visibility=True):
 
 
 # ---------------------------------------------------------------------------
+# Axis equalisation
+# ---------------------------------------------------------------------------
+def _equalize_axes(fig):
+    """
+    Makes x/y/z axes equal on each 3D subplot independently (cubic aspect).
+    Each subplot is centred on its own data and given a uniform half-span,
+    so no axis is stretched — but subplots are not forced to share a scale.
+    A 5% margin is added so trajectories never touch the border.
+    """
+    for ax in fig.axes:
+        if not hasattr(ax, 'get_zlim'):
+            continue
+
+        all_lims = (
+            list(ax.get_xlim3d())
+            + list(ax.get_ylim3d())
+            + list(ax.get_zlim3d())
+        )
+        lo, hi   = min(all_lims), max(all_lims)
+        half     = (hi - lo) * 0.5 * 1.05     # +5% margin
+        cx = sum(ax.get_xlim3d()) / 2
+        cy = sum(ax.get_ylim3d()) / 2
+        cz = sum(ax.get_zlim3d()) / 2
+
+        ax.set_xlim3d(cx - half, cx + half)
+        ax.set_ylim3d(cy - half, cy + half)
+        ax.set_zlim3d(cz - half, cz + half)
+
+
+# ---------------------------------------------------------------------------
 # Figure builders
 # ---------------------------------------------------------------------------
 def build_pose_figure(df_pose, title):
@@ -146,6 +176,7 @@ def build_pose_figure(df_pose, title):
         ax = fig.add_subplot(spec, projection='3d')
         plot_joint_3d(ax, df_pose, joint, has_visibility=True)
 
+    _equalize_axes(fig)
     return fig
 
 
@@ -174,6 +205,7 @@ def build_hand_figure(df_hand, hand_side, title):
         ax = fig.add_subplot(spec, projection='3d')
         plot_joint_3d(ax, df_hand, joint, has_visibility=False)
 
+    _equalize_axes(fig)
     return fig
 
 

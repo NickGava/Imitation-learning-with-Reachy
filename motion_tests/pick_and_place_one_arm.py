@@ -36,7 +36,6 @@ neutral_pos = {
 }
 
 # Pick position
-# ----------------- TO SET BEFORE USING WITH REAL ROBOT ------------------
 pick_pos = {
     "r_shoulder_pitch": -50,
     "r_shoulder_roll": -20,

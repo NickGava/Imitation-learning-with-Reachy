@@ -118,18 +118,27 @@ def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
     previous frame exceeds JUMP_FACTOR × median displacement.
 
     Uses the median as the reference so outliers don't inflate the threshold.
+    Gaps caused by missing frames (non-consecutive frame indices) are excluded
+    from both the median computation and the jump check.
     """
     if len(df) < 2:
         return df
 
-    coords = df[xyz_cols].values
-    deltas = np.linalg.norm(np.diff(coords, axis=0), axis=1)    # shape (n-1,); un singolo numero per frame che rappresenta lo 
-                                                                # spostamento totale di tutti i giunti insieme tra un frame e il successivo.
-    median = np.median(deltas)
+    coords    = df[xyz_cols].values
+    frame_ids = df['frame'].values
+
+    deltas = np.linalg.norm(np.diff(coords, axis=0), axis=1)
+    gaps   = np.diff(frame_ids) > 1    # True where frame index is not consecutive
+
+    # Compute median only on deltas that are NOT caused by a gap
+    deltas_no_gap = deltas[~gaps]
+    median = np.median(deltas_no_gap) if len(deltas_no_gap) > 0 else np.median(deltas)
     thresh = JUMP_FACTOR * median
 
     keep = np.ones(len(df), dtype=bool)
     for i, d in enumerate(deltas):
+        if gaps[i]:
+            continue        # gap → not a real jump, skip
         if d > thresh:
             keep[i + 1] = False
 

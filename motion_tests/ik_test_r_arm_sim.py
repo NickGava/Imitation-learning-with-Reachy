@@ -6,7 +6,7 @@ import threading
 import numpy as np
 
 print("Connessione a Reachy...")
-reachy = ReachySDK(host="localhost")
+reachy = ReachySDK(host="localhost")    # DO NOT USE ON REAL ROBOT
 
 if reachy.r_arm is None or reachy.l_arm is None:
     print("❌ Impossible to connect")

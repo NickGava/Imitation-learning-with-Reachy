@@ -10,9 +10,9 @@ For each arm (right and left), reads:
 Pipeline per arm:
   1. Build Reachy base frame directly from pose landmarks
        Origin  : midpoint between left and right shoulder
-       X-axis  : left shoulder → right shoulder  (lateral, matches Reachy)
-       Y-axis  : midpoint hips → midpoint shoulders  (vertical, up)
-       Z-axis  : X × Y  (forward, right-hand rule)
+       Y-axis  : right shoulder → left shoulder  (lateral)
+       Z-axis  : midpoint hips → midpoint shoulders  (vertical, up)
+       X-axis  : Y × Z  (forward, toward camera, right-hand rule)
 
   2. Express shoulder, elbow, wrist in torso frame
 
@@ -20,7 +20,8 @@ Pipeline per arm:
        Upper arm (shoulder → elbow) : REACHY_UPPER_ARM = 0.280 m
        Forearm   (elbow   → wrist)  : REACHY_FOREARM   = 0.250 m
 
-  4. Merge with hand features on frame index
+  4. Merge with hand features on frame index; rotate the hand orientation
+     quaternion from the MediaPipe camera frame to the Reachy torso frame
 
   5. Merge right and left arm DataFrames into a single output file
 
@@ -45,9 +46,9 @@ Notes:
   - The shoulder columns are kept for debug / validation purposes.
   - Pose frames with no corresponding hand detection are kept and filled
     with neutral values: gripper fully open, identity quaternion.
-  - The quaternion from hand_features describes hand orientation in
-    camera frame; it is NOT re-expressed in torso frame here — that
-    conversion happens in run_ik.py when building the 4×4 target pose.
+  - The hand orientation quaternion (from hand_processing.py, originally in
+    the MediaPipe camera frame) is re-expressed in the Reachy torso frame
+    here, inside _map_arm(), before being written to arms_mapped.csv.
   - Frames present in only one arm (e.g. one hand_mapped.csv is missing)
     are kept; the missing arm columns are filled with NaN.
 '''

@@ -149,28 +149,25 @@ def _compute_gripper_angle(
     return r['open'] + closure * (r['closed'] - r['open'])
 
 
-def _compute_orientation(wrist : np.ndarray, index_mcp : np.ndarray, pinky_mcp : np.ndarray) -> np.ndarray:
+def _compute_orientation(wrist : np.ndarray, index_mcp : np.ndarray, pinky_mcp : np.ndarray, side = 'right_hand') -> np.ndarray:
     """
     Builds a hand reference frame from three landmarks and returns the
     corresponding unit quaternion [w, x, y, z].
 
-    Frame construction:
-      e1 = normalize(index_mcp - wrist)           forward (finger direction)
-      e3 = normalize(e1 x (pinky_mcp - wrist))    palm normal (out of palm)
+     Frame construction:
+      e3 = normalize(-(index_mcp - wrist))           forward (finger direction)
+      e1 = normalize(-(pinky_mcp - wrist) x e3)    palm normal (out of palm)
       e2 = e3 x e1                                lateral (completes frame)
     """
     v_forward = index_mcp - wrist
     v_lateral = pinky_mcp - wrist
 
-    e1 = _normalize(v_forward)
-    e3 = _normalize(np.cross(e1, v_lateral))
+    e3 = _normalize(-v_forward)
+    
+    sign = -1.0 if side == 'right_hand' else +1.0
+    e1 = _normalize(np.cross(sign * v_lateral, e3))
     e2 = np.cross(e3, e1)
 
-    # Degenerate configuration (landmarks collinear, very rare situation)
-    if np.linalg.norm(e3) < 1e-9:
-        return np.array([1.0, 0.0, 0.0, 0.0])      # identity quaternion
-
-    # Rotation matrix: columns are the basis vectors
     R = np.column_stack([e1, e2, e3])
     return _rotation_matrix_to_quaternion(R)
 
@@ -213,7 +210,7 @@ def _process_hand(input_path, output_path, side: str) -> None:
         pinky_mcp  = np.array([row['pinky_mcp_x'],  row['pinky_mcp_y'],  row['pinky_mcp_z']])
 
         angle = _compute_gripper_angle(thumb_tip, index_tip, wrist, index_mcp, side)
-        q     = _compute_orientation(wrist, index_mcp, pinky_mcp)
+        q     = _compute_orientation(wrist, index_mcp, pinky_mcp, side)
 
         rows.append([row['frame'], row['timestamp'], angle, q[0], q[1], q[2], q[3]])
 

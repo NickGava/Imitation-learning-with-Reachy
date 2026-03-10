@@ -1,30 +1,54 @@
 '''
 run_ik.py  (v2)
 =============================================================================
-Offline IK solver with dual constraint: wrist + elbow.
+Offline IK solver with dual constraint: wrist position + elbow position.
 
-No ikpy, no Unity — pure numpy FK derived directly from reachy.URDF.
+Fully offline — no Unity, no ReachySDK required.
+The FK is re-implemented in pure numpy from the Reachy URDF; the IK is
+solved frame-by-frame via numerical optimisation (scipy L-BFGS-B).
 
-FK chain per arm (joint name : origin_xyz : rotation_axis):
-  shoulder_pitch : (0, ∓0.19, 0)  : Y   ← offset is -0.19 right, +0.19 left
-  shoulder_roll  : (0,  0,    0)   : X
-  arm_yaw        : (0,  0,    0)   : Z
-  elbow_pitch    : (0,  0,  -0.28) : Y   ← ELBOW position read here
-  forearm_yaw    : (0,  0,    0)   : Z
-  wrist_pitch    : (0,  0,  -0.25) : Y   ← WRIST position read here
-  wrist_roll     : (0,  0,  -0.0325): X  ← end-effector orientation read here
+--- Forward Kinematics ---
+The FK chain propagates a 4×4 homogeneous transform from the torso origin
+through the 7 arm joints using Rodrigues rotation matrices.
+Joint positions and orientations are read at three points in the chain:
 
-Differences from v1:
-  - Fully offline — no Unity / ReachySDK required
-  - Elbow position constrained → arm shape matches the human demonstration
-  - scipy L-BFGS-B with warm start from previous frame
+  Joint           origin (relative to parent)    rotation axis
+  --------------- ------------------------------ ---------------
+  shoulder_pitch  (0, ∓0.19, 0)                  Y    ← y-offset: -0.19 right / +0.19 left
+  shoulder_roll   (0,  0,     0)                  X
+  arm_yaw         (0,  0,     0)                  Z
+  elbow_pitch     (0,  0,  -0.28)                 Y    ← elbow position sampled here
+  forearm_yaw     (0,  0,     0)                  Z
+  wrist_pitch     (0,  0,  -0.25)                 Y    ← wrist position sampled here
+  wrist_roll      (0,  0,  -0.0325)               X    ← end-effector orientation sampled here
 
+--- Optimisation ---
+For each frame, L-BFGS-B minimises a weighted cost over the 7 joint angles:
+
+  cost = W_WRIST_POS · ‖wrist_fk − wrist_target‖²
+       + W_ELBOW_POS · ‖elbow_fk − elbow_target‖²
+       + W_WRIST_ORI · ‖R_fk − R_target‖²          (disabled by default, W=0)
+       + W_SMOOTH    · ‖q − q_prev‖²                (regularisation)
+
+  Joint limits are enforced as hard bounds in the optimiser.
+  The solution of the previous frame is used as warm start (q0 = q_prev),
+  which improves both speed and temporal consistency of the trajectory.
+  If a frame does not converge (cost > 1e-4), the previous angles are kept.
+
+--- Input / Output ---
 Input:
   data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_mapped.csv
 
 Output:
   data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_ik.csv
   (same column format as v1 — run_simulation.py works unchanged)
+
+Each output row:
+  frame, timestamp,
+  r_shoulder_pitch, r_shoulder_roll, r_arm_yaw,
+  r_elbow_pitch, r_forearm_yaw, r_wrist_pitch, r_wrist_roll, r_gripper,
+  l_shoulder_pitch, l_shoulder_roll, l_arm_yaw,
+  l_elbow_pitch, l_forearm_yaw, l_wrist_pitch, l_wrist_roll, l_gripper
 '''
 
 import argparse
@@ -98,6 +122,7 @@ JOINT_LIMITS_DEG = {
         [ -35,  55],
     ], dtype=float),
 }
+JOINT_LIMIT_PADDING_DEG = 3.0
 
 REST_DEG = {
     'right': np.array([0., -5., 0., -90., 0., 0., 0.]),
@@ -109,7 +134,7 @@ REST_DEG = {
 # ---------------------------------------------------------------------------
 W_WRIST_POS = 1.0
 W_ELBOW_POS = 0.8
-W_WRIST_ORI = 0
+W_WRIST_ORI = 0.0025
 W_SMOOTH    = 0.05
 
 # ---------------------------------------------------------------------------
@@ -221,7 +246,8 @@ def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
     Optimises joint angles for every frame of one arm.
     Returns (N, 8): 7 joint angles [deg] + gripper angle [deg].
     """
-    limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side])
+    pad = JOINT_LIMIT_PADDING_DEG
+    limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side] + np.array([pad, -pad]))
     prev_q     = np.deg2rad(REST_DEG[side])
 
     n_frames = len(df)
