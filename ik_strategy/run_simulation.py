@@ -29,7 +29,7 @@ Columns expected in arms_ik.csv:
 
 Notes:
   - The script connects to ReachySDK at host "localhost" (Unity simulator).
-  - Before playback Reachy is moved to its rest pose smoothly.
+  - Before playback Reachy moves smoothly to the first frame's pose.
   - At the end of the trajectory Reachy returns to rest pose.
   - Frames where ALL joint columns for a given arm are NaN are skipped for
     that arm (the other arm is still updated).
@@ -70,6 +70,7 @@ REST_ANGLES = {
         'r_forearm_yaw':     0.,
         'r_wrist_pitch':     0.,
         'r_wrist_roll':      0.,
+        'r_gripper':         0.,
     },
     'left': {
         'l_shoulder_pitch':  0.,
@@ -79,6 +80,7 @@ REST_ANGLES = {
         'l_forearm_yaw':     0.,
         'l_wrist_pitch':     0.,
         'l_wrist_roll':      0.,
+        'l_gripper':         0.,
     },
 }
 
@@ -86,13 +88,13 @@ REST_ANGLES = {
 # e.g. 'r_shoulder_pitch' → getattr(reachy.r_arm, 'r_shoulder_pitch')
 JOINT_COLS = {
     'right': ['r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw',
-              'r_elbow_pitch', 'r_forearm_yaw', 'r_wrist_pitch', 'r_wrist_roll'],
+              'r_elbow_pitch', 'r_forearm_yaw', 'r_wrist_pitch', 'r_wrist_roll', 'r_gripper'],
     'left':  ['l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw',
-              'l_elbow_pitch', 'l_forearm_yaw', 'l_wrist_pitch', 'l_wrist_roll'],
+              'l_elbow_pitch', 'l_forearm_yaw', 'l_wrist_pitch', 'l_wrist_roll', 'l_gripper'],
 }
 
 ARM_OBJ  = {'right': lambda r: r.r_arm, 'left': lambda r: r.l_arm}
-GRIPPER_COL = {'right': 'r_gripper_angle', 'left': 'l_gripper_angle'}
+GRIPPER_COL = {'right': 'r_gripper', 'left': 'l_gripper'}
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +112,23 @@ def _goto_rest(reachy: ReachySDK) -> None:
          duration=GOTO_REST_DURATION,
          interpolation_mode=InterpolationMode.MINIMUM_JERK)
     time.sleep(GOTO_REST_DURATION + 0.1)
+
+
+def _goto_first_frame(reachy: ReachySDK, first_row: pd.Series) -> None:
+    """Moves both arms smoothly to the first frame's pose."""
+    goal = {}
+    for side, cols in JOINT_COLS.items():
+        arm = ARM_OBJ[side](reachy)
+        for col in cols:
+            val = first_row.get(col, np.nan)
+            if not pd.isna(val):
+                goal[getattr(arm, col)] = float(val)
+
+    if goal:
+        goto(goal_positions=goal,
+             duration=GOTO_REST_DURATION,
+             interpolation_mode=InterpolationMode.MINIMUM_JERK)
+        time.sleep(GOTO_REST_DURATION + 0.1)
 
 
 def _arm_columns_valid(row: pd.Series, side: str) -> bool:
@@ -135,7 +154,7 @@ def _send_frame(reachy: ReachySDK, row: pd.Series) -> None:
         # Gripper
         g_col = GRIPPER_COL[side]
         if g_col in row and not pd.isna(row[g_col]):
-            arm.gripper.goal_position = float(row[g_col])
+            getattr(arm, g_col).goal_position = float(row[g_col])
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +200,9 @@ def main():
     reachy.turn_on('r_arm')
     reachy.turn_on('l_arm')
 
-    # --- Move to rest pose ---
-    print("Moving to rest pose…")
-    _goto_rest(reachy)
+    # --- Move to first frame pose ---
+    print("Moving to first frame pose…")
+    _goto_first_frame(reachy, df.iloc[0])
     print("Ready. Starting playback…\n")
 
     # --- Playback loop ---

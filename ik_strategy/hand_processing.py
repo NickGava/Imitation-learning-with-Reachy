@@ -57,8 +57,8 @@ from config import DATA_ROOT
 #   closed = abs(20°) — fully closed gripper
 # ---------------------------------------------------------------------------
 GRIPPER_RANGE = {
-    'right_hand': {'open': -69.0, 'closed':  20.0},
-    'left_hand':  {'open':  69.0, 'closed': -20.0},
+    'right_hand': {'open': -40.0, 'closed':  20.0},
+    'left_hand':  {'open':  40.0, 'closed': -20.0},
 }
 
 # Output header
@@ -144,7 +144,7 @@ def _compute_gripper_angle(
     else:
         # Raw ratio: 0 = closed, large = open → invert and clip to [0, 1]
         closure = float(np.clip(1.0 - pinch_dist / scale, 0.0, 1.0))
-
+    
     r = GRIPPER_RANGE[side]
     return r['open'] + closure * (r['closed'] - r['open'])
 

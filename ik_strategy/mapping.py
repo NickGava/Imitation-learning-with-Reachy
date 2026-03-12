@@ -66,8 +66,8 @@ REACHY_FOREARM   = 0.250    # elbow   → wrist
 
 # Reachy gripper motor ranges (degrees)
 GRIPPER_RANGE = {
-    'right_hand': {'open': -69.0, 'closed':  20.0},
-    'left_hand':  {'open':  69.0, 'closed': -20.0},
+    'right_hand': {'open': -40.0, 'closed':  20.0},
+    'left_hand':  {'open':  40.0, 'closed': -20.0},
 }
 
 # Per-arm column names (without side prefix)
