@@ -1,7 +1,8 @@
 '''
-run_ik.py  (v2)
+run_ik.py  (v3)
 =============================================================================
 Offline IK solver with dual constraint: wrist position + elbow position.
+Head gaze point is passed through unchanged (no IK needed).
 
 Fully offline — no Unity, no ReachySDK required.
 The FK is re-implemented in pure numpy from the Reachy URDF; the IK is
@@ -35,20 +36,26 @@ For each frame, L-BFGS-B minimises a weighted cost over the 7 joint angles:
   which improves both speed and temporal consistency of the trajectory.
   If a frame does not converge (cost > 1e-4), the previous angles are kept.
 
+--- Head ---
+The head gaze point (head_x, head_y, head_z) from arms_mapped.csv is
+passed through to the output without modification. It represents the 3D
+point in the Reachy torso frame that the head should look at, and is
+consumed directly by run_simulation.py via lookAt(x, y, z).
+
 --- Input / Output ---
 Input:
   data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_mapped.csv
 
 Output:
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_ik.csv
-  (same column format as v1 — run_simulation.py works unchanged)
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv
 
 Each output row:
   frame, timestamp,
   r_shoulder_pitch, r_shoulder_roll, r_arm_yaw,
   r_elbow_pitch, r_forearm_yaw, r_wrist_pitch, r_wrist_roll, r_gripper,
   l_shoulder_pitch, l_shoulder_roll, l_arm_yaw,
-  l_elbow_pitch, l_forearm_yaw, l_wrist_pitch, l_wrist_roll, l_gripper
+  l_elbow_pitch, l_forearm_yaw, l_wrist_pitch, l_wrist_roll, l_gripper,
+  head_x, head_y, head_z
 '''
 
 import argparse
@@ -65,34 +72,25 @@ from config import DATA_ROOT
 # ---------------------------------------------------------------------------
 # FK geometry — read from reachy.URDF
 # ---------------------------------------------------------------------------
-# Each entry: (translation_xyz, rotation_axis)
-# Translation is the joint origin relative to its parent link.
-# Axis is the unit vector around which the joint rotates.
-#
-# Right arm shoulder offset: y = -0.19  (robot right side)
-# Left  arm shoulder offset: y = +0.19  (robot left  side)
-
 _FK_JOINTS = [
-    # name            translation           axis
-    ('shoulder_pitch', None,                 np.array([0., 1., 0.])),  # translation set per side
-    ('shoulder_roll',  np.array([0., 0., 0.]),   np.array([1., 0., 0.])),
-    ('arm_yaw',        np.array([0., 0., 0.]),   np.array([0., 0., 1.])),
-    ('elbow_pitch',    np.array([0., 0., -0.28]),np.array([0., 1., 0.])),  # ← elbow
-    ('forearm_yaw',    np.array([0., 0., 0.]),   np.array([0., 0., 1.])),
-    ('wrist_pitch',    np.array([0., 0., -0.25]),np.array([0., 1., 0.])),  # ← wrist pos
-    ('wrist_roll',     np.array([0., 0., -0.0325]),np.array([1., 0., 0.])),# ← wrist ori
+    # name            translation                      axis
+    ('shoulder_pitch', None,                            np.array([0., 1., 0.])),
+    ('shoulder_roll',  np.array([0., 0., 0.]),          np.array([1., 0., 0.])),
+    ('arm_yaw',        np.array([0., 0., 0.]),          np.array([0., 0., 1.])),
+    ('elbow_pitch',    np.array([0., 0., -0.28]),       np.array([0., 1., 0.])),  # ← elbow
+    ('forearm_yaw',    np.array([0., 0., 0.]),          np.array([0., 0., 1.])),
+    ('wrist_pitch',    np.array([0., 0., -0.25]),       np.array([0., 1., 0.])),  # ← wrist pos
+    ('wrist_roll',     np.array([0., 0., -0.0325]),     np.array([1., 0., 0.])),  # ← wrist ori
 ]
 
-# Indices in the joint chain for elbow and wrist positions
-_ELBOW_JOINT_IDX = 3   # after elbow_pitch
-_WRIST_POS_IDX   = 5   # after wrist_pitch  (position target)
-_WRIST_ORI_IDX   = 6   # after wrist_roll   (orientation target)
+_ELBOW_JOINT_IDX = 3
+_WRIST_POS_IDX   = 5
+_WRIST_ORI_IDX   = 6
 
 SHOULDER_Y_OFFSET = {
     'right': -0.19,
     'left':   0.19,
 }
-
 
 # ---------------------------------------------------------------------------
 # Reachy joint constants
@@ -130,7 +128,7 @@ REST_DEG = {
 }
 
 # ---------------------------------------------------------------------------
-# Loss weights — tune if elbow/wrist tradeoff needs adjustment
+# Loss weights
 # ---------------------------------------------------------------------------
 W_WRIST_POS = 1.0
 W_ELBOW_POS = 0.8
@@ -138,13 +136,14 @@ W_WRIST_ORI = 0.005
 W_SMOOTH    = 0.05
 
 # ---------------------------------------------------------------------------
-# Output format (identical to v1)
+# Output format
 # ---------------------------------------------------------------------------
 _ARM_IK_COLS = JOINT_NAMES + ['gripper']
-ARMS_IK_HEADER = (
+JOINTS_IK_HEADER = (
     ['frame', 'timestamp']
     + [f'r_{c}' for c in _ARM_IK_COLS]
     + [f'l_{c}' for c in _ARM_IK_COLS]
+    + ['head_x', 'head_y', 'head_z']
 )
 
 
@@ -178,26 +177,19 @@ def fk(q_rad: np.ndarray, side: str):
         wrist_pos (3,)  — position of wrist in torso frame
         wrist_R   (3,3) — rotation matrix of end-effector in torso frame
     """
-    # Homogeneous transform, starts at torso origin
     T = np.eye(4)
-
     elbow_pos = None
     wrist_pos = None
     wrist_R   = None
 
     for i, (_, trans, axis) in enumerate(_FK_JOINTS):
-        # Shoulder translation depends on side
         if i == 0:
             trans = np.array([0., SHOULDER_Y_OFFSET[side], 0.])
 
-        # Apply translation
         T[:3, 3] += T[:3, :3] @ trans
-
-        # Apply rotation
         R = _rot(axis, q_rad[i])
         T[:3, :3] = T[:3, :3] @ R
 
-        # Record positions at key frames
         if i == _ELBOW_JOINT_IDX:
             elbow_pos = T[:3, 3].copy()
         if i == _WRIST_POS_IDX:
@@ -212,7 +204,6 @@ def fk(q_rad: np.ndarray, side: str):
 # Helpers
 # ---------------------------------------------------------------------------
 def _quat_to_R(q: np.ndarray) -> np.ndarray:
-    """Unit quaternion [w, x, y, z] → 3×3 rotation matrix."""
     w, x, y, z = q / np.linalg.norm(q)
     return np.array([
         [1-2*(y*y+z*z), 2*(x*y-z*w),   2*(x*z+y*w)],
@@ -222,14 +213,11 @@ def _quat_to_R(q: np.ndarray) -> np.ndarray:
 
 
 def _cost(q, side, target_elbow, target_wrist, target_R, prev_q):
-    """Scalar cost for a candidate joint configuration q (radians)."""
     elbow_fk, wrist_fk, R_fk = fk(q, side)
-
     e_wrist_pos = np.sum((wrist_fk - target_wrist) ** 2)
     e_elbow_pos = np.sum((elbow_fk - target_elbow) ** 2)
     e_ori       = np.sum((R_fk     - target_R)     ** 2)
     e_smooth    = np.sum((q        - prev_q)        ** 2)
-
     return (
         W_WRIST_POS * e_wrist_pos
         + W_ELBOW_POS * e_elbow_pos
@@ -246,7 +234,7 @@ def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
     Optimises joint angles for every frame of one arm.
     Returns (N, 8): 7 joint angles [deg] + gripper angle [deg].
     """
-    pad = JOINT_LIMIT_PADDING_DEG
+    pad        = JOINT_LIMIT_PADDING_DEG
     limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side] + np.array([pad, -pad]))
     prev_q     = np.deg2rad(REST_DEG[side])
 
@@ -361,12 +349,20 @@ def main():
     out_rows = []
     for i, (_, row) in enumerate(df.iterrows()):
         r = [int(row['frame']), row['timestamp']]
+
+        # Arms: 8 values each (7 joints + gripper)
         for side in ('right', 'left'):
             r += list(results[side][i]) if results[side] is not None else [np.nan] * 8
+
+        # Head: pass through gaze point unchanged
+        r += [row.get('head_x', np.nan),
+              row.get('head_y', np.nan),
+              row.get('head_z', np.nan)]
+
         out_rows.append(r)
 
-    df_out = pd.DataFrame(out_rows, columns=ARMS_IK_HEADER)
-    output_path = folder / "arms_ik.csv"
+    df_out = pd.DataFrame(out_rows, columns=JOINTS_IK_HEADER)
+    output_path = folder / "joint_ik.csv"
     df_out.to_csv(output_path, index=False)
 
     print(f"Saved {len(df_out)} rows → {output_path}")

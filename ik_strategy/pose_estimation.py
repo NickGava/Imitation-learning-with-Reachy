@@ -40,14 +40,33 @@ DISPLAY_WIDTH = 800
 # ---------------------------------------------------------------------------
 def draw_landmarks(image, results):
     """
-    Draws only pose and hand landmarks on the frame (no face).
+    Draws pose, hand and face landmarks on the frame.
+
+    Face drawing:
+      - Full Face Mesh tesselation (grey, semi-transparent) for context
+      - 5 pipeline landmarks highlighted in cyan:
+          nose_tip (4), chin (152), forehead (10),
+          left_eye (33), right_eye (263)
     """
     if results.pose_landmarks:
+        # Indices 0-10 are face landmarks (nose, eyes, ears, mouth) — hidden
+        # because the Face Mesh already covers them with higher quality.
+        _POSE_FACE_INDICES = set(range(11))
+        _hidden = mp_drawing.DrawingSpec(color=(0, 0, 0), thickness=0, circle_radius=0)
+        default_style = mp_drawing_styles.get_default_pose_landmarks_style()
+        pose_landmark_spec = {
+            idx: (_hidden if idx in _POSE_FACE_INDICES else default_style.get(idx, mp_drawing.DrawingSpec()))
+            for idx in range(33)
+        }
+        body_connections = [
+            c for c in mp_holistic.POSE_CONNECTIONS
+            if c[0] not in _POSE_FACE_INDICES and c[1] not in _POSE_FACE_INDICES
+        ]
         mp_drawing.draw_landmarks(
             image,
             results.pose_landmarks,
-            mp_holistic.POSE_CONNECTIONS,
-            landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
+            body_connections,
+            landmark_drawing_spec=pose_landmark_spec
         )
 
     if results.right_hand_landmarks:
@@ -58,6 +77,27 @@ def draw_landmarks(image, results):
             mp_drawing_styles.get_default_hand_landmarks_style(),
             mp_drawing_styles.get_default_hand_connections_style()
         )
+
+    # --- Face: tesselation + 5 pipeline landmarks ---
+    if results.face_landmarks:
+        # Full tesselation (grey, thin lines, no dots)
+        mp_drawing.draw_landmarks(
+            image,
+            results.face_landmarks,
+            mp_holistic.FACEMESH_TESSELATION,
+            landmark_drawing_spec=None,
+            connection_drawing_spec=mp_drawing.DrawingSpec(
+                color=(150, 150, 150), thickness=1
+            )
+        )
+
+        # 5 pipeline landmarks highlighted in cyan
+        _FACE_PIPELINE_INDICES = {4, 152, 10, 33, 263}
+        h, w = image.shape[:2]
+        for idx in _FACE_PIPELINE_INDICES:
+            lm = results.face_landmarks.landmark[idx]
+            cx, cy = int(lm.x * w), int(lm.y * h)
+            cv2.circle(image, (cx, cy), 4, (255, 255, 0), -1)   # cyan filled dot
 
     if results.left_hand_landmarks:
         mp_drawing.draw_landmarks(
@@ -151,7 +191,7 @@ def main():
             # Show processing video
             h, w = frame_bgr.shape[:2]
             display = cv2.resize(frame_bgr, (DISPLAY_WIDTH, int(h * DISPLAY_WIDTH / w)))
-            #cv2.imshow("Reachy - Landmark Extraction", display)
+            # cv2.imshow("Reachy - Landmark Extraction", display)
 
             # waitKey(1) when playing, waitKey(0) when paused (blocks until keypress)
             key = cv2.waitKey(1 if not paused else 0) & 0xFF

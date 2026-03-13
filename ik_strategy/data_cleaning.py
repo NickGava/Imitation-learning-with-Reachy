@@ -3,17 +3,17 @@ data_cleaning.py
 =============================================================================
 Data cleaning pipeline for extracted landmarks.
 
-For each video (pose.csv, right_hand.csv, left_hand.csv):
+For each video (pose.csv, right_hand.csv, left_hand.csv, face.csv):
   1. Drop incomplete rows  — frames where MediaPipe returned no landmarks
   2. Drop low-visibility frames (pose only) — coordinate present but unreliable
   3. Jump detection  — remove frames with sudden, physically impossible shifts
   4. Smoothing  — One Euro Filter on all coordinate columns
 
 Input:
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{pose,right_hand,left_hand}.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{pose,right_hand,left_hand,face}.csv
 
 Output (same folder):
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{pose,right_hand,left_hand}_cleaned.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{pose,right_hand,left_hand,face}_cleaned.csv
 
 Note: the 'frame' column retains the original video indices (gaps are expected
 and intentional — they preserve traceability to the source video).
@@ -90,8 +90,7 @@ def _apply_one_euro(df : pd.DataFrame, xyz_cols : list, fps : float) -> pd.DataF
 def _drop_incomplete(df : pd.DataFrame, coord_cols : list) -> pd.DataFrame:
     """Drop rows that have NaN in any coordinate column."""
     before = len(df)
-    df = df.dropna(subset=coord_cols).reset_index(drop=True)    # rimuove le righe che hanno NaN in almeno una delle colonne in coord_cols.
-                                                                # .reset_index(drop=True) riassegna gli indici del DataFrame da 0 in su
+    df = df.dropna(subset=coord_cols).reset_index(drop=True)
     dropped = before - len(df)
     if dropped:
         print(f"incomplete rows dropped: {dropped}")
@@ -101,7 +100,7 @@ def _drop_incomplete(df : pd.DataFrame, coord_cols : list) -> pd.DataFrame:
 def _drop_low_visibility(df : pd.DataFrame, vis_cols : list) -> pd.DataFrame:
     """
     Drop rows where any visibility score is below MIN_VISIBILITY.
-    Only called for pose.csv (hand CSVs have no visibility columns).
+    Only called for pose.csv (hand and face CSVs have no visibility columns).
     """
     if not vis_cols:
         return df
@@ -242,6 +241,7 @@ def main():
         'pose':       True,     # is_pose=True → enables visibility filter
         'right_hand': False,
         'left_hand':  False,
+        'face':       False,    # no visibility columns; jump detection on image coords
     }
 
     for name, is_pose in files.items():

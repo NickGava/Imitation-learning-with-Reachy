@@ -6,9 +6,10 @@ Master pipeline: runs all processing steps in order for a single video.
 Steps (in order):
   1. pose_estimation.py   -> pose.csv, right_hand.csv, left_hand.csv
   2. data_cleaning.py     -> *_cleaned.csv
-  3. hand_processing.py   -> *_mapped.csv
-  4. mapping.py           -> arms_mapped.csv
-  5. run_ik.py            -> arms_ik.csv
+  3. face_processing.py   -> face_features.csv
+  4. hand_processing.py   -> *_mapped.csv
+  5. mapping.py           -> arms_mapped.csv
+  6. run_ik.py            -> joint_ik.csv
 
 Usage:
   python run_pipeline.py
@@ -20,8 +21,8 @@ Usage:
   python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 2
     (riprendi dallo step 2, salta pose_estimation)
 
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 3 --stop 4
-    (esegui solo gli step 3 e 4)
+  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 4 --stop 5
+    (esegui solo gli step 4 e 5)
 '''
 
 import argparse
@@ -43,7 +44,7 @@ def _make_input_stub(subject: int, exercise: int, video: int):
 
     def _fake_input(prompt=""):
         value = next(answers)
-        print(f"{prompt}{value}")   # echo come un vero terminale
+        print(f"{prompt}{value}")
         return value
 
     return _fake_input
@@ -60,7 +61,6 @@ def _run_step(step_name: str, module_name: str,
     try:
         builtins.input = _make_input_stub(subject, exercise, video)
 
-        # reload per evitare stato residuo da run precedenti
         if module_name in sys.modules:
             module = importlib.reload(sys.modules[module_name])
         else:
@@ -87,9 +87,10 @@ def _run_step(step_name: str, module_name: str,
 STEPS = [
     (1, "Pose Estimation",  "pose_estimation"),
     (2, "Data Cleaning",    "data_cleaning"),
-    (3, "Hand Processing",  "hand_processing"),
-    (4, "Mapping",          "mapping"),
-    (5, "IK Solver",        "run_ik"),
+    (3, "Face Processing",  "face_processing"),
+    (4, "Hand Processing",  "hand_processing"),
+    (5, "Mapping",          "mapping"),
+    (6, "IK Solver",        "run_ik"),
 ]
 
 
@@ -105,11 +106,11 @@ def main():
     parser.add_argument("--video",    type=int, default=None)
     parser.add_argument(
         "--start", type=int, default=1, metavar="N",
-        help="Parti dallo step N (1-5). Default: 1"
+        help="Parti dallo step N (1-6). Default: 1"
     )
     parser.add_argument(
-        "--stop", type=int, default=5, metavar="N",
-        help="Fermati dopo lo step N (1-5). Default: 5"
+        "--stop", type=int, default=6, metavar="N",
+        help="Fermati dopo lo step N (1-6). Default: 6"
     )
     args = parser.parse_args()
 
@@ -158,7 +159,7 @@ def main():
                   / f"exercise_{exercise:03d}"
                   / f"video_{video:03d}")
         print(f"\nOutput folder -> {folder}")
-        print(f"Final file    -> {folder / 'arms_ik.csv'}")
+        print(f"Final file    -> {folder / 'joint_ik.csv'}")
     except ImportError:
         pass
 
