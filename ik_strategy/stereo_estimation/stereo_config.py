@@ -1,0 +1,80 @@
+'''
+stereo_config.py
+=============================================================================
+Stereo camera calibration parameters for Reachy's left and right cameras.
+
+HOW TO FILL THIS FILE
+---------------------
+Run stereo_calibrate.py once with a checkerboard pattern (9×6, 25 mm squares
+is a good default).  That script will print the matrices below and save them
+to stereo_calib.npz.  Copy the printed values here so every other script can
+import them without re-running calibration.
+
+Coordinate convention (output 3D points):
+  Origin : principal point of the left camera
+  X      : right  (image x direction)
+  Y      : down   (image y direction) — same as OpenCV / MediaPipe image space
+  Z      : forward (depth, positive away from camera)
+
+mapping.py already converts from MediaPipe camera frame to the Reachy torso
+frame; this module only needs to describe the raw left-camera frame.
+
+Usage:
+    from stereo_config import LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, R, T, IMAGE_SIZE
+'''
+
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Image resolution (width, height) — must match what the cameras actually stream
+# ---------------------------------------------------------------------------
+IMAGE_SIZE = (960, 720)      # ← adjust if Reachy streams at a different resolution
+
+# ---------------------------------------------------------------------------
+# Left camera intrinsics
+#   K : 3×3 camera matrix  [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+#   D : distortion coefficients [k1, k2, p1, p2, k3]
+# ---------------------------------------------------------------------------
+LEFT_K = np.array([
+    [800.0,   0.0, 480.0],
+    [  0.0, 800.0, 360.0],
+    [  0.0,   0.0,   1.0],
+], dtype=np.float64)
+
+LEFT_D = np.zeros(5, dtype=np.float64)   # [k1, k2, p1, p2, k3]
+
+# ---------------------------------------------------------------------------
+# Right camera intrinsics
+# ---------------------------------------------------------------------------
+RIGHT_K = np.array([
+    [800.0,   0.0, 480.0],
+    [  0.0, 800.0, 360.0],
+    [  0.0,   0.0,   1.0],
+], dtype=np.float64)
+
+RIGHT_D = np.zeros(5, dtype=np.float64)
+
+# ---------------------------------------------------------------------------
+# Stereo extrinsics
+#   R : 3×3 rotation matrix from left to right camera frame
+#   T : (3,) translation vector (meters) from left to right camera origin
+#       For a typical horizontal stereo rig: T ≈ [-baseline, 0, 0]
+#       Reachy's stereo baseline is approximately 65 mm → T[0] ≈ -0.065
+# ---------------------------------------------------------------------------
+BASELINE_M = 0.065        # meters — update after calibration
+
+R = np.eye(3, dtype=np.float64)
+T = np.array([-BASELINE_M, 0.0, 0.0], dtype=np.float64)
+
+# ---------------------------------------------------------------------------
+# StereoSGBM parameters (tune for your scene / lighting)
+# ---------------------------------------------------------------------------
+SGBM_MIN_DISP    =   0
+SGBM_NUM_DISP    = 128    # must be divisible by 16
+SGBM_BLOCK_SIZE  =   5
+SGBM_P1          =   8 * 3 * SGBM_BLOCK_SIZE ** 2
+SGBM_P2          =  32 * 3 * SGBM_BLOCK_SIZE ** 2
+SGBM_DISP12DIFF  =   1
+SGBM_UNIQUENESS  =  10
+SGBM_SPECKLE_WIN =  100
+SGBM_SPECKLE_RNG =   2

@@ -1,6 +1,6 @@
 .venv_win39
-ik_strategy/data/
-
+ik_strategy/_data/
+ik_strategy/__pycache__/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

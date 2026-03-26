@@ -212,6 +212,7 @@ def main():
 
     folder  = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
     ik_path = folder / "joint_ik.csv"
+    # ik_path = DATA_ROOT / "dataset" / "exercise_005" / "canonical.csv"
 
     if not ik_path.exists():
         print(f"Error: joint_ik.csv not found → {ik_path}")
