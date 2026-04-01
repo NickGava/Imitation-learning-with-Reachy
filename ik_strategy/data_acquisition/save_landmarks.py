@@ -20,36 +20,7 @@ these incomplete rows are discarded in the data cleaning phase.
 import csv
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Relevant landmark indices
-# ---------------------------------------------------------------------------
-POSE_INDICES = {
-    'nose':            0,
-    'left_shoulder':  11,
-    'right_shoulder': 12,
-    'left_elbow':     13,
-    'right_elbow':    14,
-    'left_wrist':     15,
-    'right_wrist':    16,
-    'left_hip':       23,
-    'right_hip':      24,
-}
-
-HAND_INDICES = {
-    'thumb_tip':  4,   # hand closure
-    'index_tip':  8,   # hand closure
-    'wrist':      0,   # hand orientation
-    'index_mcp':  5,   # hand orientation
-    'pinky_mcp': 17,   # hand orientation
-}
-
-FACE_INDICES = {
-    'nose_tip':   4,    # approximate face origin
-    'chin':     152,    # defines vertical axis (bottom)
-    'forehead':  10,    # defines vertical axis (top)
-    'left_eye':  33,    # defines lateral axis (right in image = person's left)
-    'right_eye': 263,   # defines lateral axis (left in image = person's right)
-}
+from config import POSE_INDICES, HAND_INDICES, FACE_INDICES
 
 # ---------------------------------------------------------------------------
 # Header CSV
@@ -103,17 +74,12 @@ def init_csv_files(video_folder):
     with open(paths['face'], 'w', newline='') as f:
         csv.writer(f).writerow(FACE_HEADER)
 
-    print(f"[save_landmarks] Initialized in: {video_folder}")
     return paths
 
 
 def save_frame(results, frame_idx, csv_paths, fps: float = 30.0):
     """
     Saves the landmarks of a single frame into the respective CSV files.
-
-    Pose: uses pose_world_landmarks (coordinates in meters, origin between hips).
-    Hands: uses *_hand_landmarks (normalized image coordinates, no world space).
-    Face: uses face_landmarks (normalized image coordinates, no world space).
 
     If a landmark group is not detected, writes a row with only frame and timestamp.
 

@@ -21,7 +21,9 @@ Note: the 'frame' column retains the original video indices (gaps are expected a
 import math
 import numpy as np
 import pandas as pd
-from config import DATA_ROOT
+import cv2
+from ask_inputs import ask_inputs
+from config import DATA_ROOT, DEFAULT_FPS
 
 # ---------------------------------------------------------------------------
 # Tunable parameters
@@ -39,8 +41,6 @@ ONE_EURO_MINCUTOFF = 1.0        # min_cutoff: lower -> smoother but more lag at 
 ONE_EURO_BETA      = 0.007      # beta: higher -> less lag during fast motion
 ONE_EURO_DCUTOFF   = 1.0        # d_cutoff: cutoff for the derivative low-pass; usually left at 1.0
 
-# Fallback FPS if the source video cannot be opened
-DEFAULT_FPS = 30.0
 
 # ---------------------------------------------------------------------------
 # One Euro Filter
@@ -153,12 +153,11 @@ def _clean_file(input_path, output_path, is_pose : bool, fps : float):
     """
     Run the full cleaning pipeline on a single CSV file and save the result.
 
-    Parameters
-    ----------
-    input_path:     path to the raw landmark CSV
-    output_path:    path where the cleaned CSV is written (same folder, "_cleaned" suffix)
-    is_pose:        True for pose.csv (enables visibility filtering)
-    fps:            frame rate of the source video (used by One Euro Filter)
+    Parameters:
+        input_path:     path to the raw landmark CSV
+        output_path:    path where the cleaned CSV is written (same folder, "_cleaned" suffix)
+        is_pose:        True for pose.csv (enables visibility filtering)
+        fps:            frame rate of the source video (used by One Euro Filter)
     """
     df = pd.read_csv(input_path)
     n_original = len(df)
@@ -189,7 +188,7 @@ def _clean_file(input_path, output_path, is_pose : bool, fps : float):
     print(f"rows kept: {n_final} / {n_original} ({pct:.1f}%)")
 
     df.to_csv(output_path, index=False)
-    print(f"saved → {output_path}")
+    print(f"saved → {output_path.relative_to(DATA_ROOT)}")
 
 
 # FPS helper
@@ -198,7 +197,6 @@ def _get_fps(subject_name : str, exercise_name : str, video_name : str) -> float
     video_path = DATA_ROOT / "raw_data" / subject_name / exercise_name / f"{video_name}.mp4"
     if video_path.exists():
         try:
-            import cv2
             cap = cv2.VideoCapture(str(video_path))
             if cap.isOpened():
                 fps = cap.get(cv2.CAP_PROP_FPS)
@@ -215,26 +213,14 @@ def _get_fps(subject_name : str, exercise_name : str, video_name : str) -> float
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
-        exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
-
+    subject_name, exercise_name, video_name = ask_inputs()
     landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-
     if not landmarks_folder.is_dir():
         print(f"Error: folder not found → {landmarks_folder}")
         return
 
     fps = _get_fps(subject_name, exercise_name, video_name)
-    print(f"FPS: {fps:.1f}\n")
+    print(f"\nFPS: {fps:.1f}\n")
 
     files = {
         'pose':       True,     # is_pose=True → enables visibility filter

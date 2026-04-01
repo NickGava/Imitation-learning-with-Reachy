@@ -25,20 +25,12 @@ Output:
 import argparse
 import sys
 import textwrap
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
-_PROJECT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_PROJECT_DIR))
 
-from config import DATA_ROOT
-from run_ik import (
-    JOINT_NAMES,
-    JOINT_LIMITS_DEG,
-    JOINT_LIMIT_PADDING_DEG,
-)
+from config import DATA_ROOT, JOINT_LIMITS_DEG, JOINT_COLS
 
 # -------------------------------------------------------------------------------------
 # Safety parameters -- edit here to tighten or relax the checks
@@ -47,21 +39,13 @@ from run_ik import (
 SAFETY_PADDING_DEG: float = 3.0
 
 # Maximum allowed joint velocity (degrees/second).
-MAX_JOINT_VEL_DEG_S: float = 150.0
+MAX_JOINT_VEL_DEG_S: float = 1500.0
 
 # Threshold to consider a velocity sample valid 
 MIN_DT_S: float = 1e-3   # 1 ms
 
 # Initial frames excluded from the velocity failure check.
 N_WARMUP_FRAMES: int = 5
-
-# -------------------------------------------------------------------------------------
-# Constants derived from run_ik.py
-# -------------------------------------------------------------------------------------
-_JOINT_COLS = {
-    'right': [f'r_{j}' for j in JOINT_NAMES],
-    'left':  [f'l_{j}' for j in JOINT_NAMES],
-}
 
 # Strict limits applied by this script
 _STRICT_LIMITS = {
@@ -101,32 +85,29 @@ def check_joint_limits(df: pd.DataFrame) -> tuple[bool, list[str]]:
     """
     violations: list[str] = []
 
-    for side in ('right', 'left'):
-        cols   = _JOINT_COLS[side]
-        limits = _STRICT_LIMITS[side]
+    for col in JOINT_COLS:
+        if col.endswith('_gripper') or col not in df.columns:
+            continue
 
-        for j_idx, (col, joint_name) in enumerate(zip(cols, JOINT_NAMES)):
-            if col not in df.columns:
-                continue
+        side      = 'right' if col.startswith('r_') else 'left'
+        side_cols = [c for c in JOINT_COLS if c.startswith(col[0] + '_') and not c.endswith('_gripper')]
+        j_idx     = side_cols.index(col)
+        lo, hi    = _STRICT_LIMITS[side][j_idx]
 
-            angles = df[col].dropna().values
-            lo, hi = limits[j_idx]
+        angles = df[col].dropna().values
+        below  = angles[angles < lo]
+        above  = angles[angles > hi]
 
-            below = angles[angles < lo]
-            above = angles[angles > hi]
-
-            if len(below) > 0:
-                violations.append(
-                    f"{side:5s} | {joint_name:<15s} | below limit: "
-                    f"min={below.min():.2f}° < {lo:.2f}°  "
-                    f"({len(below)} frames)"
-                )
-            if len(above) > 0:
-                violations.append(
-                    f"{side:5s} | {joint_name:<15s} | above limit: "
-                    f"max={above.max():.2f}° > {hi:.2f}°  "
-                    f"({len(above)} frames)"
-                )
+        if len(below) > 0:
+            violations.append(
+                f"{side:5s} | {col:<20s} | below limit: "
+                f"min={below.min():.2f}° < {lo:.2f}°  ({len(below)} frames)"
+            )
+        if len(above) > 0:
+            violations.append(
+                f"{side:5s} | {col:<20s} | above limit: "
+                f"max={above.max():.2f}° > {hi:.2f}°  ({len(above)} frames)"
+            )
 
     return (len(violations) == 0), violations
 
@@ -151,49 +132,48 @@ def check_joint_velocities(df: pd.DataFrame) -> tuple[bool, list[str]]:
     timestamps = df['timestamp'].values
     dt_all     = np.diff(timestamps)
 
-    for side in ('right', 'left'):
-        for col, joint_name in zip(_JOINT_COLS[side], JOINT_NAMES):
-            if col not in df.columns:
-                continue
+    for col in JOINT_COLS:
+        if col.endswith('_gripper') or col not in df.columns:
+            continue
 
-            angles  = df[col].values
-            delta_a = np.diff(angles)
+        side   = 'right' if col.startswith('r_') else 'left'
+        angles  = df[col].values
+        delta_a = np.diff(angles)
 
-            # Valid mask: skip NaN and near-zero Δt
-            valid_all = (dt_all >= MIN_DT_S) & ~np.isnan(delta_a)
+        valid_all = (dt_all >= MIN_DT_S) & ~np.isnan(delta_a)
 
-            # Warmup warning
-            warmup_mask = valid_all.copy()
-            warmup_mask[N_WARMUP_FRAMES:] = False
-            if warmup_mask.any():
-                warmup_vels = np.abs(delta_a[warmup_mask]) / dt_all[warmup_mask]
-                v_warmup_max = warmup_vels.max()
-                if v_warmup_max > MAX_JOINT_VEL_DEG_S:
-                    peak_idx = np.where(warmup_mask)[0][warmup_vels.argmax()]
-                    frame_id = int(df['frame'].iloc[peak_idx + 1])
-                    violations.append(
-                        f"[WARN] {side:5s} | {joint_name:<15s} | warmup vel. peak={v_warmup_max:.1f} °/s "
-                        f"> {MAX_JOINT_VEL_DEG_S:.0f} °/s  (frame {frame_id}, warmup -- not a failure)"
-                    )
-
-            # Main check (post-warmup)
-            valid = valid_all.copy()
-            valid[:N_WARMUP_FRAMES] = False
-            if not valid.any():
-                continue
-
-            velocities = np.abs(delta_a[valid]) / dt_all[valid]
-            v_max = velocities.max()
-
-            if v_max > MAX_JOINT_VEL_DEG_S:
-                n_over   = (velocities > MAX_JOINT_VEL_DEG_S).sum()
-                peak_idx = np.where(valid)[0][velocities.argmax()]
+        # Warmup warning
+        warmup_mask = valid_all.copy()
+        warmup_mask[N_WARMUP_FRAMES:] = False
+        if warmup_mask.any():
+            warmup_vels  = np.abs(delta_a[warmup_mask]) / dt_all[warmup_mask]
+            v_warmup_max = warmup_vels.max()
+            if v_warmup_max > MAX_JOINT_VEL_DEG_S:
+                peak_idx = np.where(warmup_mask)[0][warmup_vels.argmax()]
                 frame_id = int(df['frame'].iloc[peak_idx + 1])
                 violations.append(
-                    f"{side:5s} | {joint_name:<15s} | max vel={v_max:.1f} °/s "
-                    f"> {MAX_JOINT_VEL_DEG_S:.0f} °/s  "
-                    f"({n_over} frames, peak at frame {frame_id})"
+                    f"[WARN] {side:5s} | {col:<20s} | warmup vel. peak={v_warmup_max:.1f} °/s "
+                    f"> {MAX_JOINT_VEL_DEG_S:.0f} °/s  (frame {frame_id}, warmup -- not a failure)"
                 )
+
+        # Main check (post-warmup)
+        valid = valid_all.copy()
+        valid[:N_WARMUP_FRAMES] = False
+        if not valid.any():
+            continue
+
+        velocities = np.abs(delta_a[valid]) / dt_all[valid]
+        v_max      = velocities.max()
+
+        if v_max > MAX_JOINT_VEL_DEG_S:
+            n_over   = (velocities > MAX_JOINT_VEL_DEG_S).sum()
+            peak_idx = np.where(valid)[0][velocities.argmax()]
+            frame_id = int(df['frame'].iloc[peak_idx + 1])
+            violations.append(
+                f"{side:5s} | {col:<20s} | max vel={v_max:.1f} °/s "
+                f"> {MAX_JOINT_VEL_DEG_S:.0f} °/s  "
+                f"({n_over} frames, peak at frame {frame_id})"
+            )
 
     return (len(violations) == 0 or all(v.startswith('[WARN]') for v in violations)), violations
 

@@ -32,9 +32,9 @@ from reachy_sdk import ReachySDK
 # ---------------------------------------------------------------------------
 # Settings — adjust before running
 # ---------------------------------------------------------------------------
-ROBOT_IP       = "localhost"
+ROBOT_IP       = "10.59.1.20"
 CHECKERBOARD   = (9, 6)          # inner corners (cols, rows)
-SQUARE_SIZE_M  = 0.025           # metres — measure your printed board!
+SQUARE_SIZE_M  = 0.022           # metres — measure your printed board!
 MIN_PAIRS      = 15              # minimum valid pairs before calibration runs
 SAVE_PATH      = Path("stereo_calib.npz")
 DISPLAY_WIDTH  = 500

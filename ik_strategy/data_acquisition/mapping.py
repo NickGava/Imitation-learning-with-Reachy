@@ -2,27 +2,27 @@
 mapping.py
 =============================================================================
 Maps cleaned pose landmarks and hand features to Reachy arm space, and
-computes the head gaze point from face features.
+transforms the head gaze point from face features.
 
 For each arm (right and left), reads:
-  - pose_cleaned.csv         → shoulder, elbow, wrist positions (world space)
-  - {side}_hand_mapped.csv   → gripper_angle, hand orientation quaternion
+  - pose_cleaned.csv         -> shoulder, elbow, wrist positions (world space)
+  - {right,left}_hand_mapped.csv   -> gripper_angle, hand orientation quaternion
 
 For the head, reads:
-  - face_features.csv        → head forward unit vector (world space)
+  - face_features.csv        -> head forward unit vector (world space)
 
 Pipeline per arm:
   1. Build Reachy base frame directly from pose landmarks
-       Origin  : midpoint between left and right shoulder
-       Y-axis  : right shoulder → left shoulder  (lateral)
-       Z-axis  : midpoint hips → midpoint shoulders  (vertical, up)
-       X-axis  : Y x Z  (forward, toward camera, right-hand rule)
+       Origin: midpoint between left and right shoulder
+       Y-axis: right shoulder -> left shoulder  (lateral)
+       Z-axis: midpoint hips -> midpoint shoulders  (vertical, up)
+       X-axis: Y x Z  (forward, toward camera, right-hand rule)
 
   2. Express shoulder, elbow, wrist in torso frame
 
   3. Scale arm segments to Reachy proportions
-       Upper arm (shoulder → elbow) : REACHY_UPPER_ARM = 0.280 m
-       Forearm   (elbow   → wrist)  : REACHY_FOREARM   = 0.250 m
+       Upper arm (shoulder -> elbow): REACHY_UPPER_ARM = 0.280 m
+       Forearm   (elbow   -> wrist) : REACHY_FOREARM   = 0.250 m
 
   4. Merge with hand features on frame index; rotate the hand orientation
      quaternion from the MediaPipe camera frame to the Reachy torso frame
@@ -37,33 +37,21 @@ Pipeline for the head:
      This is the 3D point the head is looking at, directly usable by
      ReachySDK's lookAt(x, y, z).
 
-  4. If no face data is available for a frame, look straight ahead:
-     forward direction defaults to (1, 0, 0) in torso frame,
-     gaze point = nose_torso + (1, 0, 0).
-
-  5. Merge right and left arm DataFrames and the head gaze into a single
-     output file.
+Merge right and left arm DataFrames and the head gaze into a single output file.
 
 Output (same folder as input):
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_mapped.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/poses_mapped.csv
 '''
 
 import numpy as np
 import pandas as pd
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from config import DATA_ROOT
+
+from config import DATA_ROOT, GRIPPER_RANGE
+from ask_inputs import ask_inputs
 
 # Reachy arm lengths (meters)
-REACHY_UPPER_ARM = 0.280    # shoulder → elbow
-REACHY_FOREARM   = 0.250    # elbow   → wrist
-
-# Reachy gripper motor ranges (degrees)
-GRIPPER_RANGE = {
-    'right_hand': {'open': -40.0, 'closed':  20.0},
-    'left_hand':  {'open':  40.0, 'closed': -20.0},
-}
+REACHY_UPPER_ARM = 0.280    # shoulder -> elbow
+REACHY_FOREARM   = 0.250    # elbow   -> wrist
 
 # Per-arm column names
 _ARM_COLS = [
@@ -138,7 +126,7 @@ def _build_torso_rotation_matrix(l_sh: np.ndarray, r_sh: np.ndarray, l_hip: np.n
     Builds a 3x3 rotation matrix R such that v_reachy = R.T @ v_world.
 
     Reachy base frame axes (expressed in world frame):
-      Y : normalize(l_sh - r_sh)           lateral (right → left shoulder)
+      Y : normalize(l_sh - r_sh)           lateral (right -> left shoulder)
       Z : normalize(mid_sh - mid_hip)      vertical (up)
       X : Y x Z                            toward camera (right-hand rule)
     """
@@ -148,7 +136,7 @@ def _build_torso_rotation_matrix(l_sh: np.ndarray, r_sh: np.ndarray, l_hip: np.n
     y = _normalize(l_sh - r_sh)
     z = _normalize(mid_sh - mid_hip)
     z = _normalize(z - np.dot(z, y) * y)   # re-orthogonalize Z vs Y
-    x = np.cross(y, z)                     # X = Y x Z → toward camera
+    x = np.cross(y, z)                     # X = Y x Z -> toward camera
 
     return np.column_stack([x, y, z])      # columns = Reachy axes in world frame
 
@@ -157,12 +145,11 @@ def _build_torso_rotation_matrix(l_sh: np.ndarray, r_sh: np.ndarray, l_hip: np.n
 # ---------------------------------------------------------------------------
 def _build_all_torso_frames(df_pose: pd.DataFrame) -> list:
     """
-    Pre-computes the torso rotation matrix R and shoulder-midpoint origin
-    for every row in df_pose.
+    Pre-computes the torso rotation matrix R and shoulder-midpoint origin for every row in df_pose.
 
     Returns a list of (R, origin) tuples, one per row, where:
-      - R      : (3,3) rotation matrix  -> v_reachy = R.T @ (v_world - origin)
-      - origin : (3,)  midpoint of left and right shoulder in world space
+      - R     : (3,3) rotation matrix  -> v_reachy = R.T @ (v_world - origin)
+      - origin: (3,)  midpoint of left and right shoulder in world space
     """
     frames = []
     for _, row in df_pose.iterrows():
@@ -225,7 +212,10 @@ def _map_arm(df_pose: pd.DataFrame, df_hand: pd.DataFrame, side: str, torso_fram
         df_hand[['frame', 'gripper_angle', 'q_w', 'q_x', 'q_y', 'q_z']],
         on='frame', how='left'
     )
-
+    # Handle missing hand features by interpolation
+    for col in ['gripper_angle', 'q_w', 'q_x', 'q_y', 'q_z']:
+        df_merged[col] = df_merged[col].interpolate(method='linear', limit_direction='both')
+    # Fallback for any remaining NaNs
     neutral_gripper = GRIPPER_RANGE[f'{side}_hand']['open']
     df_merged['gripper_angle'] = df_merged['gripper_angle'].fillna(neutral_gripper)
     df_merged['q_w'] = df_merged['q_w'].fillna(1.0)
@@ -266,31 +256,39 @@ def _map_head(df_pose: pd.DataFrame, df_face: pd.DataFrame, torso_frames: list) 
     Returns:
         DataFrame with columns: frame, timestamp, head_x, head_y, head_z
     """
-    # Build a fast lookup: frame -> (head_dx, head_dy, head_dz)
-    face_lookup = {}
-    for _, row in df_face.iterrows():
-        face_lookup[int(row['frame'])] = np.array([
-            row['head_dx'], row['head_dy'], row['head_dz']
-        ])
+    # --- Pre-interpolation of forward vector on each pose frame to fill NaNs ---
+    all_frames = df_pose['frame'].astype(int).tolist()
+    df_fwd = pd.DataFrame({'frame': all_frames})
+    df_fwd = pd.merge(df_fwd, df_face[['frame', 'head_dx', 'head_dy', 'head_dz']], on='frame', how='left')  # merge
+    for col in ['head_dx', 'head_dy', 'head_dz']:
+        df_fwd[col] = df_fwd[col].interpolate(method='linear', limit_direction='both')  # interpolate     
 
+    # Fallback for any remaining NaNs
+    df_fwd['head_dx'] = df_fwd['head_dx'].fillna(1.0)
+    df_fwd['head_dy'] = df_fwd['head_dy'].fillna(0.0)
+    df_fwd['head_dz'] = df_fwd['head_dz'].fillna(0.0)
+
+    # Re-normalize after linear interpolation
+    norms = np.linalg.norm(df_fwd[['head_dx', 'head_dy', 'head_dz']].values, axis=1, keepdims=True)
+    norms = np.where(norms < 1e-9, 1.0, norms)
+    df_fwd[['head_dx', 'head_dy', 'head_dz']] = df_fwd[['head_dx', 'head_dy', 'head_dz']].values / norms
+
+    # Quick lookup: frame -> interpolated forward vector
+    face_lookup = {int(row['frame']): np.array([row['head_dx'], row['head_dy'], row['head_dz']])
+                   for _, row in df_fwd.iterrows()}
+
+    # --- Main loop ---
     rows = []
     for i, (_, row) in enumerate(df_pose.iterrows()):
         R, origin = torso_frames[i]
         frame_id  = int(row['frame'])
 
-        # Nose position in torso frame
         nose_world = _xyz(row, 'nose')
         nose_torso = R.T @ (nose_world - origin)
 
-        # Head forward direction in torso frame
-        if frame_id in face_lookup:
-            fwd_world = face_lookup[frame_id]
-            fwd_torso = R.T @ fwd_world
-        else:
-            # No face data: look straight ahead from the nose position
-            fwd_torso = np.array([1.0, 0.0, 0.0])
+        fwd_world = face_lookup[frame_id]
+        fwd_torso = R.T @ fwd_world
 
-        # Gaze point: 1 m along forward direction from the nose
         gaze_point = nose_torso + 1.0 * fwd_torso
 
         rows.append({
@@ -307,28 +305,16 @@ def _map_head(df_pose: pd.DataFrame, df_face: pd.DataFrame, torso_frames: list) 
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
-        exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
-
+    subject_name, exercise_name, video_name = ask_inputs()
     folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-
     if not folder.is_dir():
-        print(f"Error: folder not found → {folder}")
+        print(f"Error: folder not found -> {folder}")
         return
 
-    # Load and validate pose
+    # --- Load and validate pose ---
     pose_path = folder / "pose_cleaned.csv"
     if not pose_path.exists():
-        print(f"Error: pose_cleaned.csv not found → {pose_path}")
+        print(f"Error: pose_cleaned.csv not found -> {pose_path}")
         return
 
     pose_required = []
@@ -336,46 +322,45 @@ def main():
               'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist',
               'nose'):
         pose_required += [f'{s}_x', f'{s}_y', f'{s}_z']
-
     df_pose = pd.read_csv(pose_path)
     n_before = len(df_pose)
     df_pose  = df_pose.dropna(subset=pose_required).reset_index(drop=True)
-    print(f"Pose: {len(df_pose)} valid frames (dropped {n_before - len(df_pose)})\n")
+    print(f"\nPose: {len(df_pose)} valid frames (dropped {n_before - len(df_pose)})\n")
 
-    # Pre-compute torso frames
+    # --- Pre-compute torso frames ---
     torso_frames = _build_all_torso_frames(df_pose)
 
-    # Load face features
+    # --- Load face features ---
     face_path = folder / "face_features.csv"
     if face_path.exists():
         df_face = pd.read_csv(face_path)
         print(f"Face: {len(df_face)} frames loaded from face_features.csv\n")
     else:
-        print("[WARNING] face_features.csv not found — head gaze will use neutral default.\n")
+        print("[WARNING] face_features.csv not found - head gaze will use neutral default.\n")
         df_face = pd.DataFrame(columns=['frame', 'timestamp', 'head_dx', 'head_dy', 'head_dz'])
 
-    # Process both arms
+    # --- Process both arms ---
     arm_dfs = {}
     for side, hand_side in [('right', 'right_hand'), ('left', 'left_hand')]:
-        print(f"=== {side} arm ===")
+        print(f"--- {side} arm ---")
 
         hand_path = folder / f"{hand_side}_mapped.csv"
         if not hand_path.exists():
-            print(f"  [SKIP] {hand_side}_mapped.csv not found — arm will be NaN.\n")
+            print(f"[SKIP] {hand_side}_mapped.csv not found - arm will be NaN.\n")
             arm_dfs[side] = None
             continue
 
         df_hand = pd.read_csv(hand_path)
         df_arm  = _map_arm(df_pose, df_hand, side, torso_frames)
-        print(f"  rows mapped: {len(df_arm)}")
+        print(f"rows mapped: {len(df_arm)}")
         arm_dfs[side] = df_arm
 
-    # Process head
-    print("\n=== head ===")
+    # --- Process head ---
+    print("--- head ---")
     df_head = _map_head(df_pose, df_face, torso_frames)
     print(f"  rows mapped: {len(df_head)}")
 
-    # Merge into a single DataFrame
+    # --- Merge arms and head into a single DataFrame ---
     df_base = df_pose[['frame', 'timestamp']].copy()
 
     for side, prefix in [('right', 'r'), ('left', 'l')]:
@@ -391,9 +376,9 @@ def main():
 
     df_out = df_base[MAPPED_HEADER]
 
-    output_path = folder / "arms_mapped.csv"
+    output_path = folder / "poses_mapped.csv"
     df_out.to_csv(output_path, index=False)
-    print(f"\nCombined output: {len(df_out)} rows -> {output_path}")
+    print(f"\nCombined output: {len(df_out)} rows -> {output_path.relative_to(DATA_ROOT)}")
     print("Done.")
 
 

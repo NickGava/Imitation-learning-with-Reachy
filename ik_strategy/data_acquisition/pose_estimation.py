@@ -24,8 +24,10 @@ Output:
 
 import cv2
 import mediapipe as mp
-from config import DATA_ROOT
+
+from config import DATA_ROOT, FACE_INDICES
 from save_landmarks import init_csv_files, save_frame
+from ask_inputs import ask_inputs
 
 # Setup MediaPipe Holistic
 mp_holistic = mp.solutions.holistic
@@ -35,9 +37,8 @@ mp_drawing_styles = mp.solutions.drawing_styles
 # Display window width in pixels
 DISPLAY_WIDTH = 800
 
-# Constants used in the helper
+# Consts
 _POSE_FACE_INDICES     = set(range(11))
-_FACE_PIPELINE_INDICES = {4, 152, 10, 33, 263}
 _HIDDEN_SPEC           = mp_drawing.DrawingSpec(color=(0, 0, 0), thickness=0, circle_radius=0)  # Indices 0-10 are face landmarks (nose, eyes, ears, mouth), they are
                                                                                                 # hidden because the Face Mesh already covers them with higher quality.
 _GREY_CONNECTION_SPEC  = mp_drawing.DrawingSpec(color=(150, 150, 150), thickness=1)
@@ -69,6 +70,10 @@ def draw_landmarks(image, results):
     if results.right_hand_landmarks:
         mp_drawing.draw_landmarks(image, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS, _DEFAULT_HAND_LM_STYLE, _DEFAULT_HAND_CN_STYLE)
 
+    # Left hand
+    if results.left_hand_landmarks:
+        mp_drawing.draw_landmarks(image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS, _DEFAULT_HAND_LM_STYLE, _DEFAULT_HAND_CN_STYLE)
+
     # Face
     if results.face_landmarks:
         # Full tesselation (grey, thin lines, no dots)
@@ -77,14 +82,10 @@ def draw_landmarks(image, results):
 
         # 5 useful landmarks highlighted in cyan
         h, w = image.shape[:2]
-        for idx in _FACE_PIPELINE_INDICES:
+        for idx in FACE_INDICES.values():
             lm = results.face_landmarks.landmark[idx]
             cx, cy = int(lm.x * w), int(lm.y * h)
             cv2.circle(image, (cx, cy), 4, (255, 255, 0), -1)   # cyan filled dot
-
-    # Left hand
-    if results.left_hand_landmarks:
-        mp_drawing.draw_landmarks(image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS, _DEFAULT_HAND_LM_STYLE, _DEFAULT_HAND_CN_STYLE)
 
     return image
 
@@ -92,21 +93,8 @@ def draw_landmarks(image, results):
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    # User input 
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
-        exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
-
+    subject_name, exercise_name, video_name = ask_inputs()
     video_path = DATA_ROOT / "raw_data" / subject_name / exercise_name / f"{video_name}.mp4"
-
     if not video_path.exists():
         print(f"Error: video not found at {video_path}")
         return
@@ -118,7 +106,7 @@ def main():
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    print(f"Video loaded: {video_path}  ({total_frames} frames @ {fps:.1f} fps)")
+    print(f"Video loaded: {video_path.relative_to(DATA_ROOT.parent)}  ({total_frames} frames @ {fps:.1f} fps)")
 
     # Initialize CSV files for this video
     landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
@@ -127,7 +115,7 @@ def main():
     frame_idx = 0
     paused    = False
 
-    print("Press 'P' to pause/resume, 'Q' to quit.")
+    print(f"\nPress 'P' to pause/resume, 'Q' to quit.")
 
     with mp_holistic.Holistic(
         min_detection_confidence=0.5,
@@ -164,7 +152,7 @@ def main():
             # Show processing video
             h, w = frame_bgr.shape[:2]
             display = cv2.resize(frame_bgr, (DISPLAY_WIDTH, int(h * DISPLAY_WIDTH / w)))
-            #cv2.imshow("Reachy - Landmark Extraction", display)
+            cv2.imshow("Reachy - Landmark Extraction", display)
 
             # waitKey(1) when playing, waitKey(0) when paused (blocks until keypress)
             key = cv2.waitKey(1 if not paused else 0) & 0xFF
@@ -172,7 +160,6 @@ def main():
             if key == ord('p'):
                 paused = not paused
                 print("[PAUSED]" if paused else "[RESUMED]")
-
             elif key == ord('q'):
                 break
 

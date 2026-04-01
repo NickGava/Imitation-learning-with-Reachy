@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ik-strategy"
+version = "0.1.0"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bc_approach*", "bc_approach*", "create_baselines*", "data_acquisition*", "reachyController*", "stereo_estimation*", "canonical_approach*", "evaluation_and_comparison*"]

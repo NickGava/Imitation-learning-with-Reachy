@@ -37,29 +37,14 @@ Usage:
 '''
 
 import argparse
-import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Optional
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
 
-from config import DATA_ROOT
-
-# ---------------------------------------------------------------------------
-# Joint columns
-# ---------------------------------------------------------------------------
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw',
-    'r_elbow_pitch',    'r_forearm_yaw',   'r_wrist_pitch', 'r_wrist_roll', 'r_gripper',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw',
-    'l_elbow_pitch',    'l_forearm_yaw',   'l_wrist_pitch', 'l_wrist_roll', 'l_gripper',
-]
-
-HEAD_COLS = ['head_x', 'head_y', 'head_z']
 N_JOINTS  = len(JOINT_COLS)   # 16
-
 
 # ---------------------------------------------------------------------------
 # Per-video builder
@@ -234,32 +219,17 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description='Build state-action BC dataset from joint_ik.csv files.'
-    )
-    parser.add_argument(
-        '--exercise', type=int, default=None,
-        help='Only process this exercise number. '
-             'Default: all exercises found in landmarks/.'
-    )
-    parser.add_argument(
-        '--subject', type=int, default=None,
-        help='Only process this subject number. Default: all subjects.'
-    )
-    parser.add_argument(
-        '--no-head', action='store_true',
-        help='Exclude head gaze columns (head_x/y/z) from the state.'
-    )
-    parser.add_argument(
-        '--head-action', action='store_true',
-        help='Include head gaze delta (action_head_x/y/z) in the action. '
-             'Required for neck exercises. Automatically includes head in the state.'
-    )
+    parser = argparse.ArgumentParser(description='Build state-action BC dataset from joint_ik.csv files.')
+    parser.add_argument('--exercise', type=int, default=None, help='Only process this exercise number. '
+             'Default: all exercises found in landmarks/.')
+    parser.add_argument('--subject', type=int, default=None, help='Only process this subject number. Default: all subjects.')
+    parser.add_argument('--no-head', action='store_true', help='Exclude head gaze columns (head_x/y/z) from the state.')
+    parser.add_argument('--head-action', action='store_true', help='Include head gaze delta (action_head_x/y/z) in the action. '
+             'Required for neck exercises. Automatically includes head in the state.')
     args = parser.parse_args()
 
     landmarks_root = DATA_ROOT / 'landmarks'
     dataset_root   = DATA_ROOT / 'dataset'
-
     if not landmarks_root.is_dir():
         print(f'Error: landmarks folder not found -> {landmarks_root}')
         return

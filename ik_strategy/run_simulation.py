@@ -47,10 +47,7 @@ Notes:
 import time
 import numpy as np
 import pandas as pd
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from config import DATA_ROOT
+from config import DATA_ROOT, HEAD_COLS
 
 from reachy_sdk import ReachySDK
 from reachy_sdk.trajectory import goto
@@ -99,7 +96,6 @@ JOINT_COLS = {
               'l_elbow_pitch', 'l_forearm_yaw', 'l_wrist_pitch', 'l_wrist_roll', 'l_gripper'],
 }
 
-HEAD_COLS   = ['head_x', 'head_y', 'head_z']
 ARM_OBJ     = {'right': lambda r: r.r_arm, 'left': lambda r: r.l_arm}
 GRIPPER_COL = {'right': 'r_gripper', 'left': 'l_gripper'}
 

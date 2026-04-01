@@ -28,31 +28,28 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Image resolution (width, height) — must match what the cameras actually stream
 # ---------------------------------------------------------------------------
-IMAGE_SIZE = (960, 720)      # ← adjust if Reachy streams at a different resolution
+IMAGE_SIZE = (480, 640)     # ← adjust if Reachy streams at a different resolution
 
 # ---------------------------------------------------------------------------
 # Left camera intrinsics
 #   K : 3×3 camera matrix  [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
 #   D : distortion coefficients [k1, k2, p1, p2, k3]
 # ---------------------------------------------------------------------------
-LEFT_K = np.array([
-    [800.0,   0.0, 480.0],
-    [  0.0, 800.0, 360.0],
-    [  0.0,   0.0,   1.0],
-], dtype=np.float64)
 
-LEFT_D = np.zeros(5, dtype=np.float64)   # [k1, k2, p1, p2, k3]
+LEFT_K  = np.array([[402.168823,   0.      , 224.341125],
+ [  0.      , 402.231721, 308.735249],
+ [  0.      ,   0.      ,   1.      ]], dtype=np.float64)
+
+LEFT_D  = np.array([-3.593085e-01,  2.013986e-01,  1.416095e-03,  3.445533e-04, -6.501238e-02], dtype=np.float64)
 
 # ---------------------------------------------------------------------------
 # Right camera intrinsics
 # ---------------------------------------------------------------------------
-RIGHT_K = np.array([
-    [800.0,   0.0, 480.0],
-    [  0.0, 800.0, 360.0],
-    [  0.0,   0.0,   1.0],
-], dtype=np.float64)
+RIGHT_K = np.array([[397.034718,   0.      , 255.346365],
+ [  0.      , 397.328189, 297.138257],
+ [  0.      ,   0.      ,   1.      ]], dtype=np.float64)
 
-RIGHT_D = np.zeros(5, dtype=np.float64)
+RIGHT_D = np.array([-3.609302e-01,  1.469785e-01,  1.274684e-03,  1.297635e-04, -3.082630e-02], dtype=np.float64)
 
 # ---------------------------------------------------------------------------
 # Stereo extrinsics
@@ -61,10 +58,12 @@ RIGHT_D = np.zeros(5, dtype=np.float64)
 #       For a typical horizontal stereo rig: T ≈ [-baseline, 0, 0]
 #       Reachy's stereo baseline is approximately 65 mm → T[0] ≈ -0.065
 # ---------------------------------------------------------------------------
-BASELINE_M = 0.065        # meters — update after calibration
+BASELINE_M = 0.07429      # meters 
 
-R = np.eye(3, dtype=np.float64)
-T = np.array([-BASELINE_M, 0.0, 0.0], dtype=np.float64)
+R = np.array([[ 0.999975,  0.004879,  0.005028],
+ [-0.004782,  0.999807, -0.019065],
+ [-0.00512 ,  0.01904 ,  0.999806]], dtype=np.float64)
+T = np.array([-0.074286,  0.00185 , -0.001255], dtype=np.float64)
 
 # ---------------------------------------------------------------------------
 # StereoSGBM parameters (tune for your scene / lighting)

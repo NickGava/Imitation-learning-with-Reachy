@@ -22,19 +22,17 @@ Controls (live preview):
 import cv2
 import numpy as np
 import mediapipe as mp
-from pathlib import Path
+import csv
+import time
 
-from config import DATA_ROOT
-from save_landmarks import init_csv_files, POSE_INDICES, HAND_INDICES, FACE_INDICES
+from config import DATA_ROOT, POSE_INDICES, HAND_INDICES, FACE_INDICES  
+from data_acquisition.save_landmarks import init_csv_files
 from stereo_config import (
-    LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, R as R_stereo, T as T_stereo, IMAGE_SIZE,
+    LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, R as R_stereo, T as T_stereo,
     SGBM_MIN_DISP, SGBM_NUM_DISP, SGBM_BLOCK_SIZE,
     SGBM_P1, SGBM_P2, SGBM_DISP12DIFF, SGBM_UNIQUENESS,
     SGBM_SPECKLE_WIN, SGBM_SPECKLE_RNG,
 )
-from stereo_config import T_stereo as _T
-import csv
-import time
 
 DISPLAY_WIDTH = 500
 
@@ -110,7 +108,7 @@ def _disparity_to_depth_map(disp_raw, P_L):
 
     fx = P_L[0, 0]
     # P_R[0, 3] = -fx * Tx  where Tx = baseline (positive). Baseline = abs(T_stereo[0])
-    baseline = abs(float(_T[0]))
+    baseline = abs(float(T_stereo[0]))
 
     depth = fx * baseline / disp    # metres
     return depth                    # float32, NaN where invalid
@@ -187,9 +185,9 @@ def _extract_pose_row(results, frame_idx, timestamp, depth_map, P_L, frame_w, fr
         else:
             cam_xyz = np.array(p) - origin
             # Invert Y: camera Y is down, world Y is up
-            x =  cam_xyz[0]
-            y = -cam_xyz[1]
-            z =  cam_xyz[2]
+            x = cam_xyz[0]
+            y = cam_xyz[1]
+            z = cam_xyz[2]
             vis = float(lms[POSE_INDICES[name]].visibility)
             row += [x, y, z, vis]
 

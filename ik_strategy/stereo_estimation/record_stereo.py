@@ -20,9 +20,7 @@ Usage:
 '''
 
 import time
-import threading
 import cv2
-from pathlib import Path
 from reachy_sdk import ReachySDK
 
 from config import DATA_ROOT
@@ -30,9 +28,9 @@ from config import DATA_ROOT
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
-ROBOT_IP     = "localhost" 
+ROBOT_IP     = "10.59.1.20" 
 FOURCC       = cv2.VideoWriter_fourcc(*'mp4v')
-DISPLAY_WIDTH = 640              # preview window width
+DISPLAY_WIDTH = 500              # preview window width
 
 
 # ---------------------------------------------------------------------------

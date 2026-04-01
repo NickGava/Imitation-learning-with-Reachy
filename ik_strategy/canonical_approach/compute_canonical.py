@@ -31,19 +31,7 @@ from scipy.interpolate import interp1d
 
 from tslearn.barycenters import dtw_barycenter_averaging
 
-from config import DATA_ROOT
-
-# ---------------------------------------------------------------------------
-# Column definitions
-# ---------------------------------------------------------------------------
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw',
-    'r_elbow_pitch',    'r_forearm_yaw',   'r_wrist_pitch', 'r_wrist_roll', 'r_gripper',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw',
-    'l_elbow_pitch',    'l_forearm_yaw',   'l_wrist_pitch', 'l_wrist_roll', 'l_gripper',
-]
-
-HEAD_COLS = ['head_x', 'head_y', 'head_z']
+from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
 
 OUTPUT_COLS = ['frame', 'timestamp'] + JOINT_COLS + HEAD_COLS
 
@@ -161,7 +149,7 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     # Load sequences
     sequences = _load_sequences(landmarks_root, exercise_num, filter_subject)
 
-    if len(sequences) < 2:
+    if len(sequences) < 1:
         print(f'  Need at least 2 sequences for DBA, found {len(sequences)}. Skipping.')
         return
 

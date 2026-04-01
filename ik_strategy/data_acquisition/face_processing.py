@@ -23,7 +23,9 @@ Each output row:
 
 import numpy as np
 import pandas as pd
+
 from config import DATA_ROOT
+from ask_inputs import ask_inputs
 
 FEATURES_HEADER = ['frame', 'timestamp', 'head_dx', 'head_dy', 'head_dz']
 
@@ -50,7 +52,7 @@ def _compute_head_forward(forehead: np.ndarray, chin: np.ndarray, left_eye: np.n
     Returns the head forward unit vector.
 
     Parameters:
-        forehead, chin, left_eye, right_eye: 3D positions in face image space (normalized image coords from face_cleaned.csv)
+        forehead, chin, left_eye, right_eye: 3D positions in face image space
     """
     e_up = _normalize(forehead - chin)
     e_left = _normalize(right_eye - left_eye)
@@ -91,41 +93,27 @@ def _process_face(input_path, output_path) -> None:
 
     out = pd.DataFrame(rows, columns=FEATURES_HEADER)
     out.to_csv(output_path, index=False)
-    print(f"rows saved: {len(out)} / {n_loaded}")
-    print(f"→ {output_path}")
+    print(f"rows saved: {len(out)} / {n_loaded} → {output_path.relative_to(DATA_ROOT)}")
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
-        exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
-
+    subject_name, exercise_name, video_name = ask_inputs()
     landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-
     if not landmarks_folder.is_dir():
         print(f"Error: folder not found → {landmarks_folder}")
         return
 
     input_path  = landmarks_folder / "face_cleaned.csv"
     output_path = landmarks_folder / "face_features.csv"
-
     if not input_path.exists():
         print(f"Error: face_cleaned.csv not found → {input_path}")
         return
 
-    print("--- face ---")
+    print("\n--- face ---")
     _process_face(input_path, output_path)
-    print("\nDone.")
+    print("Done.")
 
 if __name__ == "__main__":
     main()

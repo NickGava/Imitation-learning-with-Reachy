@@ -46,7 +46,9 @@ from reachy_sdk.trajectory.interpolation import InterpolationMode
 import torch
 import torch.nn as nn
 
-from config import DATA_ROOT
+from config import DATA_ROOT, REST_POSE, JOINT_COLS, HEAD_COLS
+
+import reachyController.timeSeries
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -55,23 +57,6 @@ SIMULATOR_HOST  = 'localhost'
 MIN_FRAME_DELAY = 0.033    # ~30 Hz
 GOTO_DURATION   = 2.0      # seconds to move to first pose / rest pose
 
-# Reachy rest pose
-REST_POSE = {
-    'r_shoulder_pitch':  0.,  'r_shoulder_roll': -5.,  'r_arm_yaw':    0.,
-    'r_elbow_pitch':   -90.,  'r_forearm_yaw':    0.,  'r_wrist_pitch': 0.,
-    'r_wrist_roll':      0.,  'r_gripper':        0.,
-    'l_shoulder_pitch':  0.,  'l_shoulder_roll':  5.,  'l_arm_yaw':    0.,
-    'l_elbow_pitch':   -90.,  'l_forearm_yaw':    0.,  'l_wrist_pitch': 0.,
-    'l_wrist_roll':      0.,  'l_gripper':        0.,
-}
-
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw',
-    'r_elbow_pitch',    'r_forearm_yaw',   'r_wrist_pitch', 'r_wrist_roll', 'r_gripper',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw',
-    'l_elbow_pitch',    'l_forearm_yaw',   'l_wrist_pitch', 'l_wrist_roll', 'l_gripper',
-]
-HEAD_COLS   = ['head_x', 'head_y', 'head_z']
 HEAD_NEUTRAL = (1.0, 0.0, 0.15)
 
 
@@ -98,13 +83,11 @@ class BCModel(nn.Module):
 # ---------------------------------------------------------------------------
 def _connect(host: str):
     from reachy_sdk import ReachySDK
+    from reachyController.reachyController import ReachyController
     print(f'Connecting to Reachy at {host} ...')
     reachy = ReachySDK(host=host)
-    print('Connected.')
-    reachy.turn_on('r_arm')
-    reachy.turn_on('l_arm')
-    reachy.turn_on('head')
-    return reachy
+    rController = ReachyController(reachy)
+    return rController
 
 
 def _goto_rest(reachy) -> None:
@@ -281,6 +264,14 @@ def _run_canonical(exercise_num: int, dataset_root: Path, host: str) -> None:
     # Connect
     reachy = _connect(host)
 
+    reachy.turnOn()
+
+    timeS = reachyController.timeSeries.TimeSeries.loadFromCSV(canonical_path)
+    print(timeS.jointPosition)
+    reachy.armLeft.playArmRecord(timeS)
+
+    reachy.turnOffSmooth()
+    """
     # Move to first frame pose
     q0   = df[JOINT_COLS].iloc[0].values
     head0 = df[HEAD_COLS].iloc[0].values if all(c in df.columns for c in HEAD_COLS) \
@@ -312,7 +303,7 @@ def _run_canonical(exercise_num: int, dataset_root: Path, host: str) -> None:
     reachy.turn_off_smoothly('r_arm')
     reachy.turn_off_smoothly('l_arm')
     reachy.turn_off_smoothly('head')
-
+"""
 
 # ---------------------------------------------------------------------------
 # Main

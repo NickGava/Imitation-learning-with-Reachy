@@ -5,18 +5,18 @@ Runs all processing steps in order for a single video.
 
 Steps (in order):
   1. pose_estimation.py   -> pose.csv, right_hand.csv, left_hand.csv face.csv
-  2. data_cleaning.py     -> *_cleaned.csv
+  2. data_cleaning.py     -> pose_cleaned.csv, right_hand_cleaned.csv, left_hand_cleaned.csv face_cleaned.csv
   3. face_processing.py   -> face_features.csv
-  4. hand_processing.py   -> *_mapped.csv
-  5. mapping.py           -> arms_mapped.csv
+  4. hand_processing.py   -> right_hand_mapped.csv, left_hand_mapped.csv
+  5. mapping.py           -> poses_mapped.csv
   6. run_ik.py            -> joint_ik.csv
   7. validate_trajectory.py 
 
 Usage:
-  python run_pipeline.py (insert subject/exercise/video just once)
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 (directly pass the values)
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 2 (restart from step 2, skip pose_estimation)
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 4 --stop 5 (run only step 4 e 5)
+  python run_pipeline.py
+  python run_pipeline.py --subject 1 --exercise 2 --video 3 
+  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 2 
+  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 4 --stop 5 
 '''
 
 import argparse
@@ -27,12 +27,23 @@ import time
 import traceback
 from pathlib import Path
 
+from config import DATA_ROOT
+
 # adds a directory in the Python path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "data_acquisition"))
 
-# ---------------------------------------------------------------------------
+# Pipeline steps
+STEPS = [
+    (1, "Pose Estimation",       "pose_estimation"),
+    (2, "Data Cleaning",         "data_cleaning"),
+    (3, "Face Processing",       "face_processing"),
+    (4, "Hand Processing",       "hand_processing"),
+    (5, "Mapping",               "mapping"),
+    (6, "IK Solver",             "run_ik"),
+    # (7, "Safety Validation",     "validate_trajectory"),
+]
+
 # Utility: patch input() so each module gets the right values automatically (without asking the user)
-# ---------------------------------------------------------------------------
 def _make_input_stub(subject: int, exercise: int, video: int):
     answers = iter([str(subject), str(exercise), str(video)])
 
@@ -73,19 +84,6 @@ def _run_step(step_name: str, module_name: str, subject: int, exercise: int, vid
         builtins.input = original_input
 
 # ---------------------------------------------------------------------------
-# Pipeline steps
-# ---------------------------------------------------------------------------
-STEPS = [
-    (1, "Pose Estimation",       "pose_estimation"),
-    (2, "Data Cleaning",         "data_cleaning"),
-    (3, "Face Processing",       "face_processing"),
-    (4, "Hand Processing",       "hand_processing"),
-    (5, "Mapping",               "mapping"),
-    (6, "IK Solver",             "run_ik"),
-    (7, "Safety Validation",     "validate_trajectory"),
-]
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -93,8 +91,8 @@ def main():
     parser.add_argument("--subject",  type=int, default=None)
     parser.add_argument("--exercise", type=int, default=None)
     parser.add_argument("--video",    type=int, default=None)
-    parser.add_argument("--start", type=int, default=1, metavar="N", help="Parti dallo step N (1-7). Default: 1")
-    parser.add_argument("--stop", type=int, default=7, metavar="N", help="Fermati dopo lo step N (1-7). Default: 7")
+    parser.add_argument("--start", type=int, default=1, metavar="N", help="Start from step N (1-7). Default: 1")
+    parser.add_argument("--stop", type=int, default=7, metavar="N", help="Stop after step N (1-7). Default: 7")
     args = parser.parse_args()
 
     try:
@@ -102,7 +100,7 @@ def main():
         exercise = args.exercise if args.exercise is not None else int(input("Exercise number: ").strip())
         video    = args.video    if args.video    is not None else int(input("Video number:    ").strip())
     except ValueError:
-        print("Errore: i valori devono essere interi.")
+        print("Error: Invalid input. Please enter integer values.")
         sys.exit(1)
 
     print(f"\nTarget : subject_{subject:03d} / exercise_{exercise:03d} / video_{video:03d}")
@@ -121,7 +119,6 @@ def main():
 
         if not ok:
             print(f"\nPipeline stopped at step {step_num}.")
-            print(f"Correct the error and restart with: --start {step_num}")
             sys.exit(1)
 
     # --- Summary ---
@@ -130,16 +127,15 @@ def main():
     print(f"{'='*60}")
     for step_num, step_name, _ in STEPS:
         if step_num in results:
-            status = "OK  " if results[step_num] else "FAIL"
+            status = "OK" if results[step_num] else "FAIL"
             print(f"  [{status}] Step {step_num}: {step_name}")
         else:
             print(f"  [----] Step {step_num}: {step_name}  (skipped)")
 
     try:
-        from config import DATA_ROOT
         folder = (DATA_ROOT / "landmarks" / f"subject_{subject:03d}" / f"exercise_{exercise:03d}" / f"video_{video:03d}")
-        print(f"\nOutput folder -> {folder}")
-        print(f"Final file    -> {folder / 'joint_ik.csv'}")
+        print(f"\nOutput folder -> {folder.relative_to(DATA_ROOT)}")
+        print(f"Final file    -> {folder.relative_to(DATA_ROOT) / 'joint_ik.csv'}\n")
     except ImportError:
         pass
 

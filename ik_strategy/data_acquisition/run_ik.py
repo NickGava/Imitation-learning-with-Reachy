@@ -22,27 +22,22 @@ For each frame, L-BFGS-B minimises a weighted cost over the 7 joint angles:
   If a frame does not converge (success=False and cost ≥ 1e-4), the previous angles are kept.
 
 --- Head ---
-The head gaze point (head_x, head_y, head_z) from arms_mapped.csv is
-passed through to the output without modification. 
+The head gaze point (head_x, head_y, head_z) from poses_mapped.csv is passed through to the output, no modification. 
 
 --- Input / Output ---
 Input:
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/arms_mapped.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/poses_mapped.csv
 
 Output:
   data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv
 '''
 
-import argparse
-import sys
 import numpy as np
 import pandas as pd
 import scipy.optimize as opt
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parent))
-from config import DATA_ROOT
-
+from config import DATA_ROOT, HEAD_COLS, JOINT_COLS, JOINT_LIMITS_DEG, JOINT_LIMIT_PADDING_DEG, REST_DEG
+from ask_inputs import ask_inputs
 
 # FK geometry: read from reachy.URDF
 _FK_JOINTS = [
@@ -66,34 +61,7 @@ SHOULDER_Y_OFFSET = {
 }
 
 # Reachy joint constants
-JOINT_NAMES = ['shoulder_pitch', 'shoulder_roll', 'arm_yaw', 'elbow_pitch', 'forearm_yaw', 'wrist_pitch', 'wrist_roll']
-
-JOINT_LIMITS_DEG = {
-    'right': np.array([
-        [-150,  90],    # shoulder_pitch
-        [-180,  10],    # shoulder_roll
-        [ -90,  90],    # arm_yaw
-        [-125,   0],    # elbow_pitch
-        [-100, 100],    # forearm_yaw
-        [ -45,  45],    # wrist_pitch
-        [ -55,  35],    # wrist_roll
-    ], dtype=float),
-    'left': np.array([
-        [-150,  90],
-        [ -10, 180],
-        [ -90,  90],
-        [-125,   0],
-        [-100, 100],
-        [ -45,  45],
-        [ -35,  55],
-    ], dtype=float),
-}
-JOINT_LIMIT_PADDING_DEG = 3.0
-
-REST_DEG = {
-    'right': np.array([0., -5., 0., -90., 0., 0., 0.]),
-    'left':  np.array([0.,  5., 0., -90., 0., 0., 0.]),
-}
+#JOINT_NAMES = ['shoulder_pitch', 'shoulder_roll', 'arm_yaw', 'elbow_pitch', 'forearm_yaw', 'wrist_pitch', 'wrist_roll']
 
 # Loss weights
 W_WRIST_POS = 1.0
@@ -102,14 +70,7 @@ W_WRIST_ORI = 0.005
 W_SMOOTH    = 0.05
 
 # Output format
-_ARM_IK_COLS = JOINT_NAMES + ['gripper']
-JOINTS_IK_HEADER = (
-    ['frame', 'timestamp']
-    + [f'r_{c}' for c in _ARM_IK_COLS]
-    + [f'l_{c}' for c in _ARM_IK_COLS]
-    + ['head_x', 'head_y', 'head_z']
-)
-
+JOINTS_IK_HEADER = (['frame', 'timestamp'] + JOINT_COLS + HEAD_COLS)
 
 # ---------------------------------------------------------------------------
 # Pure numpy forward kinematics
@@ -126,7 +87,6 @@ def _rot(axis: np.ndarray, angle_rad: float) -> np.ndarray:
         [y*x*(1-c) + z*s,   c + y*y*(1-c),    y*z*(1-c) - x*s],
         [z*x*(1-c) - y*s,   z*y*(1-c) + x*s,  c + z*z*(1-c)  ],
     ])
-
 
 def fk(q_rad: np.ndarray, side: str):
     """
@@ -163,7 +123,6 @@ def fk(q_rad: np.ndarray, side: str):
 
     return elbow_pos, wrist_pos, wrist_R
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -191,13 +150,12 @@ def _cost(q, side, target_elbow, target_wrist, target_R, prev_q):
 # ---------------------------------------------------------------------------
 # Per-arm IK loop
 # ---------------------------------------------------------------------------
-def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
+def _run_ik_arm(df: pd.DataFrame, p: str, side: str) -> np.ndarray:
     """
     Optimises joint angles for every frame of one arm.
     Returns (N, 8): 7 joint angles [deg] + gripper angle [deg].
     """
-    pad        = JOINT_LIMIT_PADDING_DEG
-    limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side] + np.array([pad, -pad]))
+    limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side] + np.array([JOINT_LIMIT_PADDING_DEG, -JOINT_LIMIT_PADDING_DEG]))
     prev_q     = np.deg2rad(REST_DEG[side])
 
     n_frames = len(df)
@@ -205,7 +163,6 @@ def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
     n_warn   = 0
 
     for i, (_, row) in enumerate(df.iterrows()):
-        p = prefix
 
         target_elbow = np.array([row[f'{p}_elbow_x'], row[f'{p}_elbow_y'], row[f'{p}_elbow_z']])
         target_wrist = np.array([row[f'{p}_wrist_x'], row[f'{p}_wrist_y'], row[f'{p}_wrist_z']])
@@ -234,10 +191,10 @@ def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
         out[i,  7] = row[f'{p}_gripper_angle']
 
         if (i + 1) % 100 == 0:
-            print(f"    frame {i+1:4d} / {n_frames}")
+            print(f"Frame {i+1:4d} / {n_frames}")
 
     if n_warn:
-        print(f"  Convergence warnings: {n_warn} / {n_frames}")
+        print(f"Convergence warnings: {n_warn} / {n_frames}")
 
     return out
 
@@ -246,63 +203,34 @@ def _run_ik_arm(df: pd.DataFrame, prefix: str, side: str) -> np.ndarray:
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Offline IK solver — elbow + wrist dual constraint, pure numpy FK.")
-    parser.add_argument('--subject',  type=int, default=None)
-    parser.add_argument('--exercise', type=int, default=None)
-    parser.add_argument('--video',    type=int, default=None)
-    parser.add_argument('--test-fk',  action='store_true', help='Run a quick FK sanity check at rest pose and exit.')
-    args = parser.parse_args()
-
-    # FK sanity check
-    if args.test_fk:
-        for side in ('right', 'left'):
-            q_rest = np.deg2rad(REST_DEG[side])
-            elbow, wrist, R = fk(q_rest, side)
-            print(f"{side} arm at rest pose:")
-            print(f"  elbow : {elbow}")
-            print(f"  wrist : {wrist}")
-            print(f"  R tip :\n{R}\n")
-        return
-
-    # Video ID
-    try:
-        subject_num  = args.subject  if args.subject  is not None else int(input("Subject number:  ").strip())
-        exercise_num = args.exercise if args.exercise is not None else int(input("Exercise number: ").strip())
-        video_num    = args.video    if args.video    is not None else int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
+    subject_name, exercise_name, video_name = ask_inputs()
     folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-
     if not folder.is_dir():
         print(f"Error: folder not found → {folder}")
         return
 
-    mapped_path = folder / "arms_mapped.csv"
+    mapped_path = folder / "poses_mapped.csv"
     if not mapped_path.exists():
-        print(f"Error: arms_mapped.csv not found → {mapped_path}")
+        print(f"Error: poses_mapped.csv not found → {mapped_path}")
         return
 
     df = pd.read_csv(mapped_path)
-    print(f"Loaded {len(df)} frames from {mapped_path}\n")
+    print(f"Loaded {len(df)} frames from {mapped_path.relative_to(DATA_ROOT)}\n")
 
     # Run IK per arm
     results = {}
     for side, prefix in [('right', 'r'), ('left', 'l')]:
-        print(f"=== {side} arm ===")
+        print(f"--- {side} arm ---")
         wrist_col = f"{prefix}_wrist_x"
 
+        # Defensive check: if no wrist data, skip IK for this arm and fill with NaNs
         if wrist_col not in df.columns or df[wrist_col].isna().all():
-            print(f"  [SKIP] No data for {side} arm.\n")
+            print(f"[SKIP] No data for {side} arm.\n")
             results[side] = None
             continue
 
         results[side] = _run_ik_arm(df, prefix, side)
-        print(f"  IK complete.\n")
+        print(f"IK complete.\n")
 
     # Assemble output
     out_rows = []
@@ -324,7 +252,7 @@ def main():
     output_path = folder / "joint_ik.csv"
     df_out.to_csv(output_path, index=False)
 
-    print(f"Saved {len(df_out)} rows -> {output_path}")
+    print(f"Saved {len(df_out)} rows -> {output_path.relative_to(DATA_ROOT)}")
     print("Done.")
 
 

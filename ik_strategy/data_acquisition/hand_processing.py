@@ -5,27 +5,22 @@ Computes hand features from cleaned hand landmark CSVs.
 
 For each hand (right and left), two features are computed per frame:
 
-  1. Gripper angle: motor angle (degrees) ready to send to Reachy.
-                      Computed from the normalized pinch distance between thumb
-                      tip and index tip, then mapped linearly to the
-                      Reachy motor range.
+  1. Gripper angle: motor angle (degrees) ready to send to Reachy. Computed from the normalized pinch 
+                    distance between thumb tip and index tip, then mapped linearly to the Reachy motor range.
 
-  2. Hand orientation: quaternion [q_w, q_x, q_y, q_z] describing the
-                        orientation of the hand reference frame relative to the
-                        camera frame.
+  2. Hand orientation: quaternion [q_w, q_x, q_y, q_z] describing the orientation of the hand reference 
+                        frame relative to the camera frame.
                         Reference frame construction:
-                          e1 = normalize(index_mcp − wrist)       forward
-                          e3 = normalize(e1 × (pinky_mcp − wrist)) palm normal
-                          e2 = e3 × e1                             lateral
-                        The rotation matrix R = [e1 | e2 | e3] is then
-                        converted to a unit quaternion (w, x, y, z).
+                        e3 = normalize(-(index_mcp - wrist))        forward (finger direction)
+                        e1 = normalize(±(pinky_mcp - wrist) x e3)   palm normal (out of palm)
+                        e2 = e3 x e1                                lateral (completes frame)
+                        The rotation matrix R = [e1 | e2 | e3] is then converted to a unit quaternion (w, x, y, z).
 
 Input:
   data/landmarks/subject_XXX/exercise_XXX/video_XXX/{right,left}_hand_cleaned.csv
 
 Output (same folder):
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/right_hand_mapped.csv
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/left_hand_mapped.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{right,left}_hand_mapped.csv
 
 Each output row:
   frame, timestamp, gripper_angle, q_w, q_x, q_y, q_z
@@ -33,15 +28,18 @@ Each output row:
 
 import numpy as np
 import pandas as pd
-from config import DATA_ROOT
 
-# ---------------------------------------------------------------------------
-# Reachy gripper motor ranges (degrees)
-# ---------------------------------------------------------------------------
-GRIPPER_RANGE = {
-    'right_hand': {'open': -40.0, 'closed':  20.0},
-    'left_hand':  {'open':  40.0, 'closed': -20.0},
-}
+from config import DATA_ROOT, GRIPPER_RANGE
+from ask_inputs import ask_inputs
+
+
+_REQUIRED_COLS = [
+    'thumb_tip_x', 'thumb_tip_y', 'thumb_tip_z',
+    'index_tip_x', 'index_tip_y', 'index_tip_z',
+    'wrist_x',     'wrist_y',     'wrist_z',
+    'index_mcp_x', 'index_mcp_y', 'index_mcp_z',
+    'pinky_mcp_x', 'pinky_mcp_y', 'pinky_mcp_z',
+]
 
 # Output header
 FEATURES_HEADER = ['frame', 'timestamp', 'gripper_angle', 'q_w', 'q_x', 'q_y', 'q_z']
@@ -154,15 +152,7 @@ def _process_hand(input_path, output_path, side: str) -> None:
     df = pd.read_csv(input_path)
     n_loaded = len(df)
 
-    required_cols = [
-        'thumb_tip_x', 'thumb_tip_y', 'thumb_tip_z',
-        'index_tip_x', 'index_tip_y', 'index_tip_z',
-        'wrist_x',     'wrist_y',     'wrist_z',
-        'index_mcp_x', 'index_mcp_y', 'index_mcp_z',
-        'pinky_mcp_x', 'pinky_mcp_y', 'pinky_mcp_z',
-    ]
-
-    df = df.dropna(subset=required_cols).reset_index(drop=True)
+    df = df.dropna(subset=_REQUIRED_COLS).reset_index(drop=True)
     n_valid = len(df)
     dropped = n_loaded - n_valid
     if dropped:
@@ -183,27 +173,14 @@ def _process_hand(input_path, output_path, side: str) -> None:
 
     out = pd.DataFrame(rows, columns=FEATURES_HEADER)
     out.to_csv(output_path, index=False)
-    print(f"rows saved: {len(out)} / {n_loaded}")
-    print(f"→ {output_path}")
+    print(f"rows saved: {len(out)} / {n_loaded} → {output_path.relative_to(DATA_ROOT)}")
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
-        exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
-
+    subject_name, exercise_name, video_name = ask_inputs()
     landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-
     if not landmarks_folder.is_dir():
         print(f"Error: folder not found → {landmarks_folder}")
         return
@@ -211,16 +188,14 @@ def main():
     for side in ('right_hand', 'left_hand'):
         input_path  = landmarks_folder / f"{side}_cleaned.csv"
         output_path = landmarks_folder / f"{side}_mapped.csv"
-
         if not input_path.exists():
             print(f"[SKIP] {side}_cleaned.csv not found.\n")
             continue
 
-        print(f"--- {side} ---")
+        print(f"\n--- {side} ---")
         _process_hand(input_path, output_path, side)
-        print()
 
-    print("Done.")
+    print("\nDone.")
 
 if __name__ == "__main__":
     main()

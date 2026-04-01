@@ -47,18 +47,11 @@ import torch.nn as nn
 from scipy.stats import pearsonr
 from tslearn.metrics import dtw_path
 
-from config import DATA_ROOT
+from config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Column definitions
 # ---------------------------------------------------------------------------
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw',
-    'r_elbow_pitch',    'r_forearm_yaw',   'r_wrist_pitch', 'r_wrist_roll', 'r_gripper',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw',
-    'l_elbow_pitch',    'l_forearm_yaw',   'l_wrist_pitch', 'l_wrist_roll', 'l_gripper',
-]
-HEAD_COLS   = ['head_x', 'head_y', 'head_z']
 HEAD_NEUTRAL = np.array([1.0, 0.0, 0.15], dtype=np.float32)
 
 REST_POSE = np.array([
