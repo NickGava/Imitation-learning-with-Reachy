@@ -9,9 +9,9 @@ Figures produced:
   left_hand.png  - all 5 left hand landmarks               
 
 Input:
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose.csv
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/right_hand.csv
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/left_hand.csv
+  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose_cleaned.csv
+  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/right_hand_cleaned.csv
+  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/left_hand_cleaned.csv
 
 Output (same folder):
   _data/landmarks/subject_XXX/exercise_XXX/video_XXX/plots/pose.png
@@ -136,7 +136,7 @@ def build_pose_figure(df_pose: pd.DataFrame, title: str) -> plt.Figure:
     dim_lbls  = [lbl for _, lbl in DIMS]
     col_names = [name for name, _ in groups]
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize  = (14, 9), sharex = True, sharey = False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize  = (14, 9), sharex = True, sharey = "row")
     fig.suptitle(f"Pose - {title}", fontsize=12, fontweight='bold')
 
     for col_idx, (_, joints) in enumerate(groups):

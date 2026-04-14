@@ -33,11 +33,11 @@ from config import DATA_ROOT, DEFAULT_FPS
 MIN_VISIBILITY = 0.5           # frames where any joint is below this are dropped
 
 # Jump detection
-JUMP_FACTOR = 5.0               # drop frame if displacement > JUMP_FACTOR × median displacement
+JUMP_FACTOR = 1.5               # drop frame if displacement > JUMP_FACTOR × median displacement
                                 # lower = stricter; raise if too many valid frames are removed
 
 # One Euro Filter parameters
-ONE_EURO_MINCUTOFF = 1.0        # min_cutoff: lower -> smoother but more lag at rest
+ONE_EURO_MINCUTOFF = 0.5        # min_cutoff: lower -> smoother but more lag at rest
 ONE_EURO_BETA      = 0.007      # beta: higher -> less lag during fast motion
 ONE_EURO_DCUTOFF   = 1.0        # d_cutoff: cutoff for the derivative low-pass; usually left at 1.0
 
@@ -111,41 +111,58 @@ def _drop_low_visibility(df : pd.DataFrame, vis_cols : list) -> pd.DataFrame:
 
 
 def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
-    """
-    Remove frames where the L2 displacement (across all coordinates) from the
-    previous frame exceeds JUMP_FACTOR x median displacement.
-
-    Uses the median as the reference so outliers don't inflate the threshold.
-    Gaps caused by missing frames (non-consecutive frame indices) are excluded
-    from both the median computation and the jump check.
-    """
     if len(df) < 2:
         return df
 
-    coords    = df[xyz_cols].values
+    coords    = df[xyz_cols].values.copy()
     frame_ids = df['frame'].values
+    gaps      = np.diff(frame_ids) > 1
 
     deltas = np.linalg.norm(np.diff(coords, axis=0), axis=1)
-    gaps   = np.diff(frame_ids) > 1    # True where frame index is not consecutive
-
-    # Compute median only on deltas that are NOT caused by a gap
     deltas_no_gap = deltas[~gaps]
-    median = np.median(deltas_no_gap) if len(deltas_no_gap) > 0 else np.median(deltas)
+    median = np.median(deltas_no_gap) if len(deltas_no_gap) > 0 else 0
     thresh = JUMP_FACTOR * median
 
-    keep = np.ones(len(df), dtype=bool)
-    for i, d in enumerate(deltas):
-        if gaps[i]:
-            continue        # gap -> not a real jump, skip
-        if d > thresh:
-            keep[i + 1] = False
+    # Identifica tutti gli indici dove c'è un salto (transizioni anomale)
+    jump_indices = set(i for i, d in enumerate(deltas) if d > thresh and not gaps[i])
 
-    dropped = (~keep).sum()
-    if dropped:
-        print(f"jump frames dropped: {dropped} (threshold={thresh:.5f}, median_disp={median:.5f})")
-    return df[keep].reset_index(drop=True)
+    # Raggruppa indici contigui in blocchi
+    blocks = []
+    if jump_indices:
+        sorted_jumps = sorted(jump_indices)
+        start = sorted_jumps[0]
+        end   = sorted_jumps[0]
+        for idx in sorted_jumps[1:]:
+            if idx == end + 1:
+                end = idx           # estendi il blocco corrente
+            else:
+                blocks.append((start, end))
+                start = end = idx
+        blocks.append((start, end))
 
+    # Per ogni blocco: il segnale anomalo va da start+1 a end+1 incluso
+    # Interpola linearmente tra coords[start] (prima del salto) e coords[end+2] (dopo il ritorno)
+    n_fixed = 0
+    for start, end in blocks:
+        left_idx  = start           # ultimo frame buono prima del blocco
+        right_idx = end + 2         # primo frame buono dopo il blocco
+        if right_idx >= len(coords):
+            right_idx = len(coords) - 1
 
+        n_interp = right_idx - left_idx - 1   # numero di frame da sostituire
+        for k in range(1, n_interp + 1):
+            alpha = k / (n_interp + 1)
+            coords[left_idx + k] = (1 - alpha) * coords[left_idx] + alpha * coords[right_idx]
+
+        n_fixed += n_interp
+        print(f"  block [{left_idx+1}..{right_idx-1}] ({n_interp} frames) interpolated")
+
+    if n_fixed:
+        print(f"jump frames interpolated: {n_fixed} (threshold={thresh:.5f}, median={median:.5f})")
+
+    df = df.copy()
+    df[xyz_cols] = coords
+    return df
 # ---------------------------------------------------------------------------
 # Per-file pipeline
 # ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@ stereo_calibrate.py
 =============================================================================
 One-time stereo calibration using a printed checkerboard pattern.
 
-Recommended checkerboard : 9×6 inner corners, 25 mm square size.
+Recommended checkerboard : 9x6 inner corners, 25 mm square size.
 Print it, glue it to a rigid flat board, and measure the actual square size
-with a ruler — enter it as SQUARE_SIZE_M below.
+with a ruler - enter it as SQUARE_SIZE_M below.
 
 After calibration the script:
   1. Prints the matrices you need to copy into stereo_config.py.
@@ -16,7 +16,7 @@ How to capture calibration frames
 Run this script and hold the checkerboard in front of Reachy's cameras.
 Move it to cover as many positions and orientations as possible
 (tilted, corners, centre, close, far).  The script captures a frame pair
-every time it detects the pattern in BOTH images — aim for 20–40 pairs.
+every time it detects the pattern in BOTH images - aim for 20-40 pairs.
 Press Q when done.
 
 Usage:
@@ -30,11 +30,11 @@ from pathlib import Path
 from reachy_sdk import ReachySDK
 
 # ---------------------------------------------------------------------------
-# Settings — adjust before running
+# Settings - adjust before running
 # ---------------------------------------------------------------------------
 ROBOT_IP       = "10.59.1.20"
 CHECKERBOARD   = (9, 6)          # inner corners (cols, rows)
-SQUARE_SIZE_M  = 0.022           # metres — measure your printed board!
+SQUARE_SIZE_M  = 0.022           # metres - measure your printed board!
 MIN_PAIRS      = 15              # minimum valid pairs before calibration runs
 SAVE_PATH      = Path("stereo_calib.npz")
 DISPLAY_WIDTH  = 500
@@ -44,11 +44,7 @@ def main():
     print(f"Connecting to Reachy at {ROBOT_IP}…")
     reachy = ReachySDK(host=ROBOT_IP)
     print("Connected.\n")
-    print(f"Checkerboard : {CHECKERBOARD[0]}×{CHECKERBOARD[1]} inner corners, "
-          f"{SQUARE_SIZE_M*1000:.0f} mm squares")
-    print("Move the board in front of both cameras.")
-    print("A frame pair is captured automatically when both cameras see the pattern.")
-    print("Press Q when you have enough pairs (target: 20–40).\n")
+    print("Press Q when you have enough pairs.\n")
 
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
     cols, rows = CHECKERBOARD
@@ -101,13 +97,12 @@ def main():
         n = len(obj_pts)
         color = (0, 200, 0) if n >= MIN_PAIRS else (0, 165, 255)
         for img in (preview_L, preview_R):
-            cv2.putText(img, f"Pairs: {n}  (need {MIN_PAIRS})  Q=done",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            cv2.putText(img, f"Pairs: {n}  (need {MIN_PAIRS})  Q=done", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         side_by_side = np.hstack([preview_L, preview_R])
         dh = int(left.shape[0] * DISPLAY_WIDTH / left.shape[1])
         shown = cv2.resize(side_by_side, (DISPLAY_WIDTH * 2, dh))
-        cv2.imshow("Stereo Calibration — Left | Right", shown)
+        cv2.imshow("Stereo Calibration - Left | Right", shown)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -135,7 +130,7 @@ def main():
     )
     print(f"Stereo calibration RMS reprojection error: {rms:.4f} px")
     if rms > 1.0:
-        print("  ⚠  RMS > 1.0 — consider recapturing with better coverage.")
+        print("  ⚠  RMS > 1.0 - consider recapturing with better coverage.")
 
     # Save
     np.savez(str(SAVE_PATH),

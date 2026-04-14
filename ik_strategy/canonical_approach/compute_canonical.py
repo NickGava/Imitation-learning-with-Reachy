@@ -3,23 +3,15 @@ compute_canonical.py
 =============================================================================
 Computes the canonical trajectory for each exercise using DBA (DTW Barycenter Averaging).
 
-Input: data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv
+Input: all data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv for the same exercise (for all exercises)
 
 Output: data/dataset/exercise_XXX/canonical.csv
 
-Usage
------
-  # all exercises, all subjects
-  python compute_canonical.py
-
-  # only exercise 1
-  python compute_canonical.py --exercise 1
-
-  # only subject 2, exercise 1 (useful for debugging with one subject)
-  python compute_canonical.py --exercise 1 --subject 2
-
-  # change number of DBA iterations (default: 30)
-  python compute_canonical.py --max-iter 50
+Usage:
+  python compute_canonical.py                           # all exercises, all subjects
+  python compute_canonical.py --exercise 1              # only exercise 1
+  python compute_canonical.py --exercise 1 --subject 2  # only subject 2, exercise 1 
+  python compute_canonical.py --max-iter 50             # change number of DBA iterations (default: 30)
 '''
 
 import argparse
@@ -28,7 +20,6 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, List
 from scipy.interpolate import interp1d
-
 from tslearn.barycenters import dtw_barycenter_averaging
 
 from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
@@ -43,8 +34,8 @@ DEFAULT_MAX_ITER = 30
 # ---------------------------------------------------------------------------
 def _load_sequences(landmarks_root: Path, exercise_num: int, filter_subject: Optional[int]) -> List[pd.DataFrame]:
     '''
-    Crawls the landmarks folder and loads all joint_ik.csv files for the
-    given exercise. Returns a list of DataFrames, one per video.
+    Crawls the landmarks folder and loads all joint_ik.csv files for the given exercise.
+    Returns a list of DataFrames, one per video.
 
     Parameters:
         landmarks_root : path to data/landmarks/
@@ -72,8 +63,7 @@ def _load_sequences(landmarks_root: Path, exercise_num: int, filter_subject: Opt
             video_num = int(video_dir.name.split('_')[1])
             ik_path   = video_dir / 'joint_ik.csv'
 
-            print(f'  Loading subject_{subject_num:03d} / {exercise_name} / '
-                  f'video_{video_num:03d} ... ', end='', flush=True)
+            print(f'Loading subject_{subject_num:03d} / {exercise_name} / video_{video_num:03d} ... ', end='', flush=True)
 
             if not ik_path.exists():
                 print('MISSING')
@@ -93,25 +83,25 @@ def _load_sequences(landmarks_root: Path, exercise_num: int, filter_subject: Opt
             print(f'{len(df)} frames')
             sequences.append(df)
 
-    print(f'\n  Sequences loaded : {len(sequences)}  |  skipped: {n_skipped}')
+    print(f'\nSequences loaded : {len(sequences)}  |  skipped: {n_skipped}')
     return sequences
 
 def _run_dba(arrays: List[np.ndarray], max_iter: int, label: str) -> np.ndarray:
     '''
-    Runs DBA on a list of numpy arrays and returns the barycenter.
+    Runs DBA on a list of numpy arrays and returns the barycenter sequence.
 
     Parameters:
-        arrays   : list of (N_i, D) arrays — sequences to average
+        arrays   : list of (N_i, D) arrays (sequences to average)
         max_iter : maximum number of DBA iterations
         label    : name shown in progress output (e.g. 'joints', 'head')
 
     Returns:
         (L, D) array : the canonical sequence
     '''
-    # tslearn expects a list of (T, D) arrays
+    # Find the sequence with length closest to the median length
     init_seq = arrays[int(np.argmin(np.abs(np.array([len(a) for a in arrays]) - np.median([len(a) for a in arrays]))))]
 
-    print(f'  Running DBA on {label} ({len(arrays)} sequences, max_iter={max_iter}) ...', flush=True)
+    print(f'Running DBA on {label} ({len(arrays)} sequences, max_iter={max_iter}) ...', flush=True)
 
     barycenter = dtw_barycenter_averaging(
         arrays,
@@ -119,20 +109,18 @@ def _run_dba(arrays: List[np.ndarray], max_iter: int, label: str) -> np.ndarray:
         init_barycenter = init_seq,
         max_iter        = max_iter,
         tol             = 1e-5,
-        verbose         = False,
+        verbose         = False,           # set to True for more detailed convergence info
     )
 
-    print(f'  Done. Canonical length: {len(barycenter)} frames')
+    print(f'Done. Canonical length: {len(barycenter)} frames')
     return barycenter   # shape: (L, D)
-
 
 # ---------------------------------------------------------------------------
 # Per-exercise processor
 # ---------------------------------------------------------------------------
 def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Path, filter_subject: Optional[int], max_iter: int) -> None:
     '''
-    Loads all joint_ik.csv files for one exercise, runs DBA separately on
-    joint angles and head gaze, and saves the combined canonical.csv.
+    Loads all joint_ik.csv files for one exercise, runs DBA separately on joint angles and head gaze, and saves the combined canonical.csv.
 
     Parameters:
         exercise_num   : exercise number to process
@@ -150,17 +138,15 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     sequences = _load_sequences(landmarks_root, exercise_num, filter_subject)
 
     if len(sequences) < 1:
-        print(f'  Need at least 2 sequences for DBA, found {len(sequences)}. Skipping.')
+        print(f'Need at least 2 sequences for DBA, found {len(sequences)}. Skipping.')
         return
 
-    # Extract arrays for DBA
+    # --- Extract arrays for DBA ---
     # Joints: shape (N_i, 16), in degrees
     joint_arrays = [df[JOINT_COLS].values.astype(float) for df in sequences]
 
     # Head: shape (N_i, 3), in meters; use only sequences that have head data
-    head_available = [df for df in sequences
-                      if all(c in df.columns for c in HEAD_COLS)
-                      and not df[HEAD_COLS].isna().all().any()]
+    head_available = [df for df in sequences if all(c in df.columns for c in HEAD_COLS) and not df[HEAD_COLS].isna().all().any()]
     head_arrays = [df[HEAD_COLS].values.astype(float) for df in head_available]
 
     # Run DBA independently on joints and head
@@ -168,18 +154,17 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
 
     if head_arrays:
         canonical_head = _run_dba(head_arrays, max_iter, label='head (meters)')
-        # canonical_head may have different length than canonical_joints if
-        # not all sequences had head data; resample to match joints length
+        # canonical_head may have different length than canonical_joints if not all sequences had head data; resample to match joints length
         if len(canonical_head) != len(canonical_joints):
             t_old = np.linspace(0, 1, len(canonical_head))
             t_new = np.linspace(0, 1, len(canonical_joints))
             interp = interp1d(t_old, canonical_head, axis=0, kind='linear')
             canonical_head = interp(t_new)
     else:
-        print('  No head data found — filling head columns with NaN.')
+        print('No head data found, filling head columns with NaN.')
         canonical_head = np.full((len(canonical_joints), 3), np.nan)
 
-    # Build output DataFrame
+    # --- Build output DataFrame ---
     L = len(canonical_joints)
 
     # Reconstruct timestamps: linearly spaced from 0 to mean duration
@@ -190,10 +175,7 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     ])
     timestamps = np.linspace(0.0, float(mean_duration), L)
 
-    out = pd.DataFrame({
-        'frame':     np.arange(L),
-        'timestamp': timestamps,
-    })
+    out = pd.DataFrame({'frame': np.arange(L), 'timestamp': timestamps,})
 
     for j, col in enumerate(JOINT_COLS):
         out[col] = canonical_joints[:, j]
@@ -213,27 +195,16 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     print(f'  Mean input length: {mean_input_len:.0f} frames')
     print(f'  Canonical length : {L} frames')
     print(f'  Mean duration    : {mean_duration:.2f} s')
-    print(f'  Saved -> {output_path}')
-
+    print(f'  Saved -> {output_path.relative_to(DATA_ROOT)}')
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description='Compute canonical trajectory via DBA for each exercise.')
-    parser.add_argument(
-        '--exercise', type=int, default=None,
-        help='Only process this exercise number. '
-             'Default: all exercises found in landmarks/.'
-    )
-    parser.add_argument(
-        '--subject', type=int, default=None,
-        help='Only use this subject. Default: all subjects.'
-    )
-    parser.add_argument(
-        '--max-iter', type=int, default=DEFAULT_MAX_ITER,
-        help=f'Maximum DBA iterations (default: {DEFAULT_MAX_ITER}).'
-    )
+    parser.add_argument('--exercise', type=int, default=None, help='Only process this exercise number. Default: all exercises found in landmarks/.')
+    parser.add_argument('--subject', type=int, default=None, help='Only use this subject. Default: all subjects.')
+    parser.add_argument('--max-iter', type=int, default=DEFAULT_MAX_ITER, help=f'Maximum DBA iterations (default: {DEFAULT_MAX_ITER}).')
     args = parser.parse_args()
 
     landmarks_root = DATA_ROOT / 'landmarks'

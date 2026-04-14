@@ -1,53 +1,41 @@
 '''
 run_bc.py
 =============================================================================
-Runs a trained BC model (or the canonical trajectory) on the Reachy simulator.
+Runs a trained BC model or the canonical trajectory on the Reachy simulator.
 
 Two modes:
-  --mode bc        : generates the trajectory in real time via the
-                     autoregressive BC loop, starting from Reachy's rest pose.
-  --mode canonical : replays canonical.csv frame by frame (same logic as
-                     run_simulation.py but reads from the dataset folder).
-
-Both modes send joint angles and head gaze to Reachy at each frame.
+  --mode bc        : generates the trajectory in real time via the autoregressive BC loop, starting from Reachy's rest pose.
+  --mode canonical : replays canonical.csv frame by frame (same logic as run_simulation.py but reads from the dataset folder).
 
 Usage:
-  # BC mode: exercise 1
-  python run_bc.py --exercise 1 --mode bc
-
-  # Canonical mode: exercise 1
-  python run_bc.py --exercise 1 --mode canonical
-
-  # Custom host (default: localhost)
-  python run_bc.py --exercise 1 --mode bc --host 10.59.1.20
-
-  # Override number of steps for BC (default: length of canonical.csv)
-  python run_bc.py --exercise 1 --mode bc --steps 300
+  python run_bc.py --exercise 1 --mode bc                       # BC mode: exercise 1
+  python run_bc.py --exercise 1 --mode canonical                # Canonical mode: exercise 1
+  python run_bc.py --exercise 1 --mode bc --host 10.59.1.20     # Custom host (default: localhost)
+  python run_bc.py --exercise 1 --mode bc --steps 300           # Override number of steps for BC (default: length of canonical.csv)
 
 Input:
   BC mode:
-    data/dataset/exercise_XXX/bc_model.pth
-    data/dataset/exercise_XXX/scaler.pkl
+    _data/dataset/exercise_XXX/bc_model.pth
+    _data/dataset/exercise_XXX/scaler.pkl
 
   Canonical mode:
-    data/dataset/exercise_XXX/canonical.csv
+    _data/dataset/exercise_XXX/canonical.csv
 '''
 
 import argparse
 import pickle
 import time
+import torch
+import torch.nn as nn
 import numpy as np
 import pandas as pd
 from pathlib import Path
-
+from reachy_sdk import ReachySDK
 from reachy_sdk.trajectory import goto
 from reachy_sdk.trajectory.interpolation import InterpolationMode
 
-import torch
-import torch.nn as nn
-
 from config import DATA_ROOT, REST_POSE, JOINT_COLS, HEAD_COLS
-
+from reachyController.reachyController import ReachyController
 import reachyController.timeSeries
 
 # ---------------------------------------------------------------------------
@@ -56,9 +44,7 @@ import reachyController.timeSeries
 SIMULATOR_HOST  = 'localhost'
 MIN_FRAME_DELAY = 0.033    # ~30 Hz
 GOTO_DURATION   = 2.0      # seconds to move to first pose / rest pose
-
 HEAD_NEUTRAL = (1.0, 0.0, 0.15)
-
 
 # ---------------------------------------------------------------------------
 # BCModel
@@ -77,31 +63,31 @@ class BCModel(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-
 # ---------------------------------------------------------------------------
 # Reachy helpers
 # ---------------------------------------------------------------------------
 def _connect(host: str):
-    from reachy_sdk import ReachySDK
-    from reachyController.reachyController import ReachyController
     print(f'Connecting to Reachy at {host} ...')
     reachy = ReachySDK(host=host)
     rController = ReachyController(reachy)
     return rController
-
+    
 
 def _goto_rest(reachy) -> None:
-    print('Returning to rest pose ...')
-    goal = {}
-    for col, val in REST_POSE.items():
-        arm   = reachy.r_arm if col.startswith('r_') else reachy.l_arm
-        joint   = getattr(arm, col, None)
-        if joint is not None:
-            goal[joint] = val
-    if goal:
-        goto(goal, duration=GOTO_DURATION, interpolation_mode=InterpolationMode.MINIMUM_JERK)
-        time.sleep(GOTO_DURATION + 0.1)
-    reachy.head.look_at(*HEAD_NEUTRAL, duration=GOTO_DURATION, interpolation_mode=InterpolationMode.MINIMUM_JERK)
+
+    reachyPosRight = {}
+    reachyPosLeft = {}
+
+    for i, col in enumerate(REST_POSE):
+        if col.startswith('r_'):
+            reachyPosRight[reachy.armRight._joints[col]] = float(list(REST_POSE.values())[i])
+        else:
+            reachyPosLeft[reachy.armLeft._joints[col]] = float(list(REST_POSE.values())[i])
+
+    reachy.armRight._debug_goto(reachyPosRight, duration=GOTO_DURATION)
+    reachy.armLeft._debug_goto(reachyPosLeft, duration=GOTO_DURATION)
+
+    reachy.head.lookAt(HEAD_NEUTRAL, duration=GOTO_DURATION)
 
 
 def _goto_pose(reachy, q: np.ndarray, head: np.ndarray) -> None:
@@ -121,15 +107,31 @@ def _goto_pose(reachy, q: np.ndarray, head: np.ndarray) -> None:
 
 def _send_frame(reachy, q: np.ndarray, head: np.ndarray, delay: float) -> None:
     '''Sends joint angles and head gaze for one frame.'''
+    # for i, col in enumerate(JOINT_COLS):
+    #     arm   = reachy.r_arm if col.startswith('r_') else reachy.l_arm
+    #     joint = getattr(arm, col, None)
+    #     if joint is not None and not np.isnan(q[i]):
+    #         joint.goal_position = float(q[i])
+
+
+    reachyPosRight = {}
+    reachyPosLeft = {}
+
+    print(reachyPosLeft)
+
     for i, col in enumerate(JOINT_COLS):
-        arm   = reachy.r_arm if col.startswith('r_') else reachy.l_arm
-        joint = getattr(arm, col, None)
-        if joint is not None and not np.isnan(q[i]):
-            joint.goal_position = float(q[i])
+        if col.startswith('r_'):
+            reachyPosRight[reachy.armRight._joints[col]] = float(q[i])
+        else:
+            reachyPosLeft[reachy.armLeft._joints[col]] = float(q[i])
+
+    
+
+    reachy.armRight._safeGoto(reachyPosRight, duration=delay, interpolation=InterpolationMode.MINIMUM_JERK)
+    reachy.armLeft._safeGoto(reachyPosLeft, duration=delay, interpolation=InterpolationMode.MINIMUM_JERK)
 
     if not np.any(np.isnan(head)):
-        reachy.head.look_at(*head.tolist(), duration=float(delay),
-                            interpolation_mode=InterpolationMode.MINIMUM_JERK)
+        reachy.head.lookAt(head.tolist(), duration=delay)
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +146,6 @@ def _run_bc(exercise_num: int, dataset_root: Path, host: str, n_steps: int) -> N
     # Load model
     if not model_path.exists():
         print(f'Error: bc_model.pth not found -> {model_path}')
-        print('Run train_bc.py --exercise first.')
         return
     if not scaler_path.exists():
         print(f'Error: scaler.pkl not found -> {scaler_path}')
@@ -234,28 +235,23 @@ def _run_bc(exercise_num: int, dataset_root: Path, host: str, n_steps: int) -> N
 
     # Return to rest
     _goto_rest(reachy)
-    reachy.turn_off_smoothly('r_arm')
-    reachy.turn_off_smoothly('l_arm')
-    reachy.turn_off_smoothly('head')
+    reachy.turnOffSmooth()
 
 
 # ---------------------------------------------------------------------------
 # Canonical mode
 # ---------------------------------------------------------------------------
 def _run_canonical(exercise_num: int, dataset_root: Path, host: str) -> None:
-
     exercise_name  = f'exercise_{exercise_num:03d}'
     canonical_path = dataset_root / exercise_name / 'canonical.csv'
-
     if not canonical_path.exists():
         print(f'Error: canonical.csv not found -> {canonical_path}')
-        print('Run compute_canonical.py --exercise first.')
         return
 
     df = pd.read_csv(canonical_path)
     print(f'Canonical trajectory loaded: {len(df)} frames')
 
-    # Compute inter-frame delays from timestamps
+    # Compute inter-frame delays from timestamps (min 0.033s for ~30Hz)
     timestamps = df['timestamp'].to_numpy()
     dt = np.diff(timestamps)
     dt = np.clip(dt, MIN_FRAME_DELAY, None)
@@ -310,16 +306,10 @@ def _run_canonical(exercise_num: int, dataset_root: Path, host: str) -> None:
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description='Run BC model or canonical trajectory on Reachy simulator.')
-    parser.add_argument('--exercise', type=int, required=True,
-        help='Exercise number.')
-    parser.add_argument('--mode', choices=['bc', 'canonical'], default='bc',
-        help='bc: autoregressive BC loop. canonical: replay canonical.csv. '
-             '(default: bc)')
-    parser.add_argument('--host', type=str, default=SIMULATOR_HOST,
-        help=f'ReachySDK host (default: {SIMULATOR_HOST}).')
-    parser.add_argument('--steps', type=int, default=None,
-        help='Number of steps for BC mode. '
-             'Default: length of canonical.csv, or 300 if not found.')
+    parser.add_argument('--exercise', type=int, required=True, help='Exercise number.')
+    parser.add_argument('--mode', choices=['bc', 'canonical'], default='bc', help='bc: autoregressive BC loop. canonical: replay canonical.csv. Default: bc')
+    parser.add_argument('--host', type=str, default=SIMULATOR_HOST, help=f'ReachySDK host (default: {SIMULATOR_HOST}).')
+    parser.add_argument('--steps', type=int, default=None, help='Number of steps for BC mode. Default: length of canonical.csv, or 300 if not found.')
     args = parser.parse_args()
 
     dataset_root = DATA_ROOT / 'dataset'

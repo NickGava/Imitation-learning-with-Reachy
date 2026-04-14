@@ -4,8 +4,8 @@ record_stereo.py
 Records a synchronized stereo video pair from Reachy's left and right cameras.
 
 Output (same folder structure as existing pipeline):
-  data/raw_data/subject_XXX/exercise_XXX/video_XXX_L.mp4   ← left camera
-  data/raw_data/subject_XXX/exercise_XXX/video_XXX_R.mp4   ← right camera
+  data/raw_data/subject_XXX/exercise_XXX/video_XXX_L.mp4   <- left camera
+  data/raw_data/subject_XXX/exercise_XXX/video_XXX_R.mp4   <- right camera
 
 Controls:
   SPACE - start / stop recording
@@ -24,6 +24,7 @@ import cv2
 from reachy_sdk import ReachySDK
 
 from config import DATA_ROOT
+from ask_inputs import ask_inputs
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -32,22 +33,11 @@ ROBOT_IP     = "10.59.1.20"
 FOURCC       = cv2.VideoWriter_fourcc(*'mp4v')
 DISPLAY_WIDTH = 500              # preview window width
 
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
-        exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
+    subject_name, exercise_name, video_name = ask_inputs()
 
     out_dir = DATA_ROOT / "raw_data" / subject_name / exercise_name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -73,13 +63,12 @@ def main():
         if frame_L is not None:
             break
         time.sleep(0.033)
-
     if frame_L is None:
         print("Error: could not read a frame from the left camera.")
         return
 
     h, w = frame_L.shape[:2]
-    print(f"Camera resolution: {w}×{h}")
+    print(f"Camera resolution: {w}x{h}")
     print("Press SPACE to start recording, Q to quit.\n")
 
     writer_L = None
@@ -107,12 +96,10 @@ def main():
             preview = left.copy()
             label   = "● REC" if recording else "SPACE=record  Q=quit"
             color   = (0, 0, 220) if recording else (0, 200, 0)
-            cv2.putText(preview, label, (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+            cv2.putText(preview, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
             if recording:
                 elapsed = now - frame_times[0]
-                cv2.putText(preview, f"{elapsed:.1f}s  {len(frame_times)} frames",
-                            (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                cv2.putText(preview, f"{elapsed:.1f}s  {len(frame_times)} frames", (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
             dh    = int(h * DISPLAY_WIDTH / w)
             shown = cv2.resize(preview, (DISPLAY_WIDTH, dh))
@@ -124,6 +111,7 @@ def main():
                 if not recording:
                     # Start recording
                     # Use a placeholder FPS; we will re-compute and warn if needed.
+                    time.sleep(1)   # to position the user before starting
                     fps_guess = 30.0
                     writer_L = cv2.VideoWriter(str(path_L), FOURCC, fps_guess, (w, h))
                     writer_R = cv2.VideoWriter(str(path_R), FOURCC, fps_guess, (w, h))
@@ -150,7 +138,6 @@ def main():
     finally:
         cv2.destroyAllWindows()
 
-
 def _report(frame_times, path_L, path_R):
     n = len(frame_times)
     if n > 1:
@@ -166,7 +153,6 @@ def _report(frame_times, path_L, path_R):
             print("  ⚠  FPS lower than expected - check USB bandwidth or CPU load.")
     else:
         print("No frames recorded.")
-
 
 if __name__ == "__main__":
     main()

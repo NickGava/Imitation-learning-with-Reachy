@@ -48,6 +48,9 @@ import time
 import numpy as np
 import pandas as pd
 from config import DATA_ROOT, HEAD_COLS
+import threading
+
+from ask_inputs import ask_inputs
 
 from reachy_sdk import ReachySDK
 from reachy_sdk.trajectory import goto
@@ -56,7 +59,7 @@ from reachy_sdk.trajectory.interpolation import InterpolationMode
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-SIMULATOR_HOST  = "localhost"
+SIMULATOR_HOST  = "localhost"   # IP address of the Reachy simulator (Unity)
 
 MIN_FRAME_DELAY = 0.02      # 50 Hz max
 
@@ -156,62 +159,60 @@ def _arm_columns_valid(row: pd.Series, side: str) -> bool:
     return not all(pd.isna(row[c]) for c in JOINT_COLS[side])
 
 
+import threading
+
 def _send_frame(reachy: ReachySDK, row: pd.Series, frame_delay: float) -> None:
-    """
-    Sends joint goals and head gaze for one frame to the simulator.
-    Arms: sets goal_position directly (no duration — handled by MIN_FRAME_DELAY).
-    Head: calls look_at() with the inter-frame delay as duration.
-    Skips an arm if all its joint columns are NaN.
-    Skips lookAt() if head columns are NaN.
-    """
-    # --- Arms ---
-    for side, cols in JOINT_COLS.items():
-        if not _arm_columns_valid(row, side):
-            continue
+    
+    # --- Arms (instantaneous goal_position, non-blocking) ---
+    def _send_arms():
+        for side, cols in JOINT_COLS.items():
+            if not _arm_columns_valid(row, side):
+                continue
+            arm = ARM_OBJ[side](reachy)
+            for col in cols:
+                val = row[col]
+                if not pd.isna(val):
+                    getattr(arm, col).goal_position = float(val)
+            g_col = GRIPPER_COL[side]
+            if g_col in row and not pd.isna(row[g_col]):
+                getattr(arm, g_col).goal_position = float(row[g_col])
 
-        arm = ARM_OBJ[side](reachy)
-        for col in cols:
-            val = row[col]
-            if not pd.isna(val):
-                getattr(arm, col).goal_position = float(val)
+    # --- Head (blocking look_at) ---
+    def _send_head():
+        if all(c in row.index for c in HEAD_COLS):
+            hx, hy, hz = row['head_x'], row['head_y'], row['head_z']
+            if not any(pd.isna(v) for v in [hx, hy, hz]):
+                reachy.head.look_at(
+                    x=float(hx), y=float(hy), z=float(hz),
+                    duration=frame_delay,
+                    interpolation_mode=InterpolationMode.LINEAR
+                )
 
-        g_col = GRIPPER_COL[side]
-        if g_col in row and not pd.isna(row[g_col]):
-            getattr(arm, g_col).goal_position = float(row[g_col])
-
-    # --- Head ---
-    if all(c in row.index for c in HEAD_COLS):
-        hx, hy, hz = row['head_x'], row['head_y'], row['head_z']
-        if not any(pd.isna(v) for v in [hx, hy, hz]):
-            reachy.head.look_at(
-                x=float(hx), y=float(hy), z=float(hz),
-                duration=float(frame_delay),
-                interpolation_mode=InterpolationMode.MINIMUM_JERK
-            )
-
+    t_head = threading.Thread(target=_send_head, daemon=True)
+    t_head.start()
+    _send_arms()          # main thread: non-blocking, ritorna subito
+    # non fare join() — lascia che il thread della testa finisca in background
+    # il time.sleep(frame_delay) nel loop principale fa già da sincronizzatore
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    try:
-        subject_num  = int(input("Subject number:  ").strip())
+    bl_or_else = input("Baseline or else? (b/e): ").strip().lower()
+
+    if bl_or_else == 'b':
         exercise_num = int(input("Exercise number: ").strip())
-        video_num    = int(input("Video number:    ").strip())
-    except ValueError:
-        print("Error: all values must be integers.")
-        return
-
-    subject_name  = f"subject_{subject_num:03d}"
-    exercise_name = f"exercise_{exercise_num:03d}"
-    video_name    = f"video_{video_num:03d}"
-
-    folder  = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-    ik_path = folder / "joint_ik.csv"
+        exercise_name = f"exercise_{exercise_num:03d}"
+        folder = DATA_ROOT / "dataset" / exercise_name
+        ik_path = folder / "baseline.csv"
+    else:
+        subject_name, exercise_name, video_name = ask_inputs()
+        folder  = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
+        ik_path = folder / "joint_ik.csv"
     # ik_path = DATA_ROOT / "dataset" / "exercise_005" / "canonical.csv"
 
     if not ik_path.exists():
-        print(f"Error: joint_ik.csv not found → {ik_path}")
+        print(f"Error: {ik_path.name} not found → {ik_path}")
         return
 
     df = pd.read_csv(ik_path)

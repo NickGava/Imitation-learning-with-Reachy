@@ -1,5 +1,5 @@
 '''
-run_pipeline.py
+run_data_acquisition.py
 =============================================================================
 Runs all processing steps in order for a single video.
 
@@ -13,10 +13,10 @@ Steps (in order):
   7. validate_trajectory.py 
 
 Usage:
-  python run_pipeline.py
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 2 
-  python run_pipeline.py --subject 1 --exercise 2 --video 3 --start 4 --stop 5 
+  python run_data_acquisition.py
+  python run_data_acquisition.py --subject 1 --exercise 2 --video 3 
+  python run_data_acquisition.py --subject 1 --exercise 2 --video 3 --start 2 
+  python run_data_acquisition.py --subject 1 --exercise 2 --video 3 --start 4 --stop 5 
 '''
 
 import argparse
@@ -91,14 +91,14 @@ def main():
     parser.add_argument("--subject",  type=int, default=None)
     parser.add_argument("--exercise", type=int, default=None)
     parser.add_argument("--video",    type=int, default=None)
-    parser.add_argument("--start", type=int, default=1, metavar="N", help="Start from step N (1-7). Default: 1")
-    parser.add_argument("--stop", type=int, default=7, metavar="N", help="Stop after step N (1-7). Default: 7")
+    parser.add_argument("--start", type=int, default=1, metavar="N", help="Start from step N (1-6). Default: 1")
+    parser.add_argument("--stop", type=int, default=6, metavar="N", help="Stop after step N (1-6). Default: 6")
     args = parser.parse_args()
 
     try:
-        subject  = args.subject  if args.subject  is not None else int(input("Subject number:  ").strip())
-        exercise = args.exercise if args.exercise is not None else int(input("Exercise number: ").strip())
-        video    = args.video    if args.video    is not None else int(input("Video number:    ").strip())
+        subject  = args.subject  if args.subject  is not None else int(input("Subject number (\"all\" to process every subject):  ").strip())
+        exercise = args.exercise if args.exercise is not None else int(input("Exercise number (\"all\" to process every exercise): ").strip())
+        video    = args.video    if args.video    is not None else int(input("Video number (\"all\" to process every video):    ").strip())
     except ValueError:
         print("Error: Invalid input. Please enter integer values.")
         sys.exit(1)

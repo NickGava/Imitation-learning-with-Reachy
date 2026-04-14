@@ -133,7 +133,9 @@ def _build_torso_rotation_matrix(l_sh: np.ndarray, r_sh: np.ndarray, l_hip: np.n
     mid_sh  = (l_sh + r_sh)   * 0.5
     mid_hip = (l_hip + r_hip) * 0.5
 
-    y = _normalize(l_sh - r_sh)
+    lateral = l_sh - r_sh
+    lateral[2] = 0.0                        # ← ignora Z: spalle alla stessa profondità
+    y = _normalize(lateral)
     z = _normalize(mid_sh - mid_hip)
     z = _normalize(z - np.dot(z, y) * y)   # re-orthogonalize Z vs Y
     x = np.cross(y, z)                     # X = Y x Z -> toward camera

@@ -13,7 +13,7 @@ State-action formulation:
 
 Head gaze (head_x/y/z) is included in the state as optional context.
 By default NOT included in the action (head handled via lookAt).
-Use --head-action to predict head deltas too — needed for neck exercises.
+Use --head-action to predict head deltas too (needed for neck exercises).
   Default:         state=[q,vel,head] 35v  action=[Dq] 16v
   --head-action:   state=[q,vel,head] 35v  action=[Dq,Dhead] 19v
   --no-head:       state=[q,vel]      32v  action=[Dq] 16v
@@ -47,33 +47,33 @@ from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
 N_JOINTS  = len(JOINT_COLS)   # 16
 
 # ---------------------------------------------------------------------------
-# Per-video builder
+# Per-csv builder
 # ---------------------------------------------------------------------------
-def _build_pairs_from_video(df: pd.DataFrame, subject: int, exercise: int, video: int, include_head: bool, head_action: bool) -> pd.DataFrame:
+def _build_pairs_from_csv(df: pd.DataFrame, subject: int, exercise: int, video: int, include_head: bool, head_action: bool) -> pd.DataFrame:
     '''
     Converts a single joint_ik.csv DataFrame into state-action pairs.
 
     Parameters:
         df           : joint_ik.csv loaded as a DataFrame
-        subject      : subject number (for metadata column)
-        exercise     : exercise number (for metadata column)
-        video        : video number (for metadata column)
+        subject      : subject number
+        exercise     : exercise number
+        video        : video number
         include_head : whether to include head gaze columns in the state
         head_action  : whether to include head gaze delta in the action
 
     Returns:
         DataFrame with one row per valid frame (frames 1 to N-2), or empty DataFrame if fewer than 3 usable frames.
     '''
-    # Drop rows where any joint column is NaN (both arms must be present)
+    # Drop rows where any joint column is NaN
     df = df.dropna(subset=JOINT_COLS).reset_index(drop=True)
 
     n = len(df)
     if n < 3:
-        print(f'    [SKIP] only {n} clean frames (need >= 3)')
+        print(f'[SKIP] only {n} clean frames (need >= 3)')
         return pd.DataFrame()
 
     q = df[JOINT_COLS].values   # shape: (N, 16)
-
+    
     # Valid indices: 1 to N-2 inclusive
     idx = np.arange(1, n - 1)
 
@@ -81,8 +81,8 @@ def _build_pairs_from_video(df: pd.DataFrame, subject: int, exercise: int, video
     q_prev = q[idx - 1]         # pose at i-1      shape: (N-2, 16)
     q_next = q[idx + 1]         # pose at i+1      shape: (N-2, 16)
 
-    vel    = q_curr - q_prev    # finite-difference velocity
-    action = q_next - q_curr    # target delta
+    vel    = q_curr - q_prev    # velocity
+    action = q_next - q_curr    # delta
 
     # Assemble output DataFrame
     out = pd.DataFrame({
@@ -132,7 +132,7 @@ def _build_pairs_from_video(df: pd.DataFrame, subject: int, exercise: int, video
 def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Path, filter_subject: Optional[int], include_head: bool, head_action: bool,) -> None:
     '''
     Crawls all subjects and videos for a single exercise, builds the
-    state-action dataset and saves it to disk.
+    state-action dataset and saves it.
 
     Parameters:
         exercise_num   : exercise number to process
@@ -151,9 +151,9 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     n_videos  = 0
     n_skipped = 0
 
-    subject_dirs = sorted(landmarks_root.glob('subject_*'))
+    subject_dirs = sorted(landmarks_root.glob('subject_*'))     # search for subject_001, subject_002, ...
     if not subject_dirs:
-        print(f'  No subject folders found under {landmarks_root}')
+        print(f'No subject folders found under {landmarks_root}')
         return
 
     for subj_dir in subject_dirs:
@@ -170,8 +170,7 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
             video_num = int(video_dir.name.split('_')[1])
             ik_path   = video_dir / 'joint_ik.csv'
 
-            print(f'  subject_{subject_num:03d} / {exercise_name} / '
-                  f'video_{video_num:03d} ... ', end='', flush=True)
+            print(f'  subject_{subject_num:03d} / {exercise_name} / video_{video_num:03d} ... ', end='', flush=True)
 
             if not ik_path.exists():
                 print('MISSING joint_ik.csv')
@@ -179,7 +178,7 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
                 continue
 
             df    = pd.read_csv(ik_path)
-            pairs = _build_pairs_from_video(df, subject_num, exercise_num, video_num, include_head, head_action)
+            pairs = _build_pairs_from_csv(df, subject_num, exercise_num, video_num, include_head, head_action)
 
             if pairs.empty:
                 n_skipped += 1
@@ -190,7 +189,7 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
             n_videos += 1
 
     if not all_dfs:
-        print(f'  No data collected for exercise {exercise_num:03d}.')
+        print(f'No data collected for exercise {exercise_num:03d}.')
         return
 
     dataset = pd.concat(all_dfs, ignore_index=True)
@@ -207,12 +206,9 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     print(f'\n  Videos processed : {n_videos}  |  skipped: {n_skipped}')
     print(f'  Total samples    : {len(dataset)}')
     print(f'  Subjects         : {sorted(dataset["subject"].unique())}')
-    print(f'  State dimension  : {state_dim}  '
-          f'({N_JOINTS} pose + {N_JOINTS} vel'
-          f'{" + 3 head" if include_head else ""})')
-    print(f'  Action dimension : {action_dim}  '
-          f'({N_JOINTS} joints{" + 3 head" if head_action else ""})')
-    print(f'  Saved -> {output_path}')
+    print(f'  State dimension  : {state_dim} ({N_JOINTS} pose + {N_JOINTS} vel{" + 3 head" if include_head else ""})')
+    print(f'  Action dimension : {action_dim} ({N_JOINTS} joints{" + 3 head" if head_action else ""})')
+    print(f'  Saved -> {output_path.relative_to(DATA_ROOT)}')
 
 
 # ---------------------------------------------------------------------------
@@ -220,12 +216,11 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description='Build state-action BC dataset from joint_ik.csv files.')
-    parser.add_argument('--exercise', type=int, default=None, help='Only process this exercise number. '
-             'Default: all exercises found in landmarks/.')
+    parser.add_argument('--exercise', type=int, default=None, help='Only process this exercise number. Default: all exercises found in landmarks/.')
     parser.add_argument('--subject', type=int, default=None, help='Only process this subject number. Default: all subjects.')
     parser.add_argument('--no-head', action='store_true', help='Exclude head gaze columns (head_x/y/z) from the state.')
-    parser.add_argument('--head-action', action='store_true', help='Include head gaze delta (action_head_x/y/z) in the action. '
-             'Required for neck exercises. Automatically includes head in the state.')
+    parser.add_argument('--head-action', action='store_true', help='Include head gaze delta (action_head_x/y/z) in the action. ' \
+                                                                    'Required for neck exercises. Automatically includes head in the state.')
     args = parser.parse_args()
 
     landmarks_root = DATA_ROOT / 'landmarks'
@@ -235,7 +230,7 @@ def main():
         return
 
     head_action  = args.head_action
-    include_head = (not args.no_head) or head_action   # head in state implied by --head-action
+    include_head = (not args.no_head) or head_action   # head in state implied when --head-action = True
     print(f'Landmarks root  : {landmarks_root}')
     print(f'Dataset root    : {dataset_root}')
     print(f'Head in state   : {include_head}')
