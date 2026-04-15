@@ -152,7 +152,7 @@ def main():
             # Show processing video
             h, w = frame_bgr.shape[:2]
             display = cv2.resize(frame_bgr, (DISPLAY_WIDTH, int(h * DISPLAY_WIDTH / w)))
-            cv2.imshow("Reachy - Landmark Extraction", display)
+            # cv2.imshow("Reachy - Landmark Extraction", display)
 
             # waitKey(1) when playing, waitKey(0) when paused (blocks until keypress)
             key = cv2.waitKey(1 if not paused else 0) & 0xFF

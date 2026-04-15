@@ -35,8 +35,8 @@ import csv
 
 from config import DATA_ROOT, POSE_INDICES, HAND_INDICES, FACE_INDICES
 from ask_inputs import ask_inputs
-from .save_landmarks import init_csv_files
-from .stereo_config import (
+from save_landmarks import init_csv_files
+from stereo_config import (
     LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, R as R_stereo, T as T_stereo,
     SGBM_MIN_DISP, SGBM_NUM_DISP, SGBM_BLOCK_SIZE,
     SGBM_P1, SGBM_P2, SGBM_DISP12DIFF, SGBM_UNIQUENESS,

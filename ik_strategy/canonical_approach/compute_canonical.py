@@ -23,6 +23,7 @@ from scipy.interpolate import interp1d
 from tslearn.barycenters import dtw_barycenter_averaging
 
 from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
+from data_acquisition.data_cleaning import _OneEuroFilter1D
 
 OUTPUT_COLS = ['frame', 'timestamp'] + JOINT_COLS + HEAD_COLS
 
@@ -196,6 +197,71 @@ def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Pat
     print(f'  Canonical length : {L} frames')
     print(f'  Mean duration    : {mean_duration:.2f} s')
     print(f'  Saved -> {output_path.relative_to(DATA_ROOT)}')
+
+    # --- Spike removal + smoothing ---
+    #
+    # Strategy: detect spike frames PER COLUMN and replace them via linear
+    # interpolation from their neighbours. This keeps the frame count intact
+    # (no rows dropped → no gaps → no jerks in simulation).
+    # After interpolation, apply One Euro Filter with parameters tuned for
+    # degree-scale joint data.
+    #
+    # A frame is a spike for column c when its absolute delta from the previous
+    # frame exceeds SPIKE_FACTOR * median(|delta|) for that column.
+    # We expand the mask by ±SPIKE_MARGIN frames to catch the flanks of each spike.
+
+    CANONICAL_FPS    = (L - 1) / float(mean_duration) if (mean_duration > 0 and L > 1) else 30.0
+    SPIKE_FACTOR     = 5        # multiples of median delta to flag a spike
+    SPIKE_MARGIN     = 2        # extra frames masked on each side of a detected spike
+    OEF_MINCUTOFF   = 2.0      # One Euro: higher than default (1.0) → less lag
+    OEF_BETA        = 0.001    # One Euro: gentler speed-based adaptation
+    OEF_DCUTOFF     = 1.0
+
+    df_can     = pd.read_csv(output_path)
+    joint_cols = JOINT_COLS                                           # degrees
+    head_cols  = [c for c in HEAD_COLS if df_can[c].notna().any()]   # metres
+
+    total_replaced = 0
+    for col in joint_cols + head_cols:
+        vals   = df_can[col].to_numpy(dtype=float)
+        deltas = np.abs(np.diff(vals, prepend=vals[0]))
+        med    = np.median(deltas)
+
+        if med < 1e-9:                                  # constant column – skip
+            continue
+
+        spike_mask = deltas > SPIKE_FACTOR * med
+
+        # Expand mask by ±SPIKE_MARGIN
+        if spike_mask.any():
+            indices = np.where(spike_mask)[0]
+            for idx in indices:
+                lo = max(0, idx - SPIKE_MARGIN)
+                hi = min(len(vals) - 1, idx + SPIKE_MARGIN)
+                spike_mask[lo:hi + 1] = True
+
+        if not spike_mask.any():
+            continue
+
+        n_spikes = spike_mask.sum()
+        total_replaced += n_spikes
+
+        # Linear interpolation over masked frames using valid neighbours
+        good_idx  = np.where(~spike_mask)[0]
+        bad_idx   = np.where(spike_mask)[0]
+        if len(good_idx) >= 2:
+            vals[bad_idx] = np.interp(bad_idx, good_idx, vals[good_idx])
+            df_can[col]   = vals
+
+    print(f'  Spike interpolation: {total_replaced} samples replaced across all columns')
+
+    # One Euro Filter smoothing
+    for col in joint_cols + head_cols:
+        f = _OneEuroFilter1D(CANONICAL_FPS, OEF_MINCUTOFF, OEF_BETA, OEF_DCUTOFF)
+        df_can[col] = [f(v) for v in df_can[col]]
+
+    df_can.to_csv(output_path, index=False)
+    print(f'  One Euro Filter applied (fps={CANONICAL_FPS:.1f}, min_cutoff={OEF_MINCUTOFF}, beta={OEF_BETA})')
 
 # ---------------------------------------------------------------------------
 # Main

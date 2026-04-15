@@ -198,13 +198,13 @@ def _send_frame(reachy: ReachySDK, row: pd.Series, frame_delay: float) -> None:
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    bl_or_else = input("Baseline or else? (b/e): ").strip().lower()
+    bl_or_else = input("From dataset or landmarks? (d/l): ").strip().lower()
 
-    if bl_or_else == 'b':
+    if bl_or_else == 'd':
         exercise_num = int(input("Exercise number: ").strip())
         exercise_name = f"exercise_{exercise_num:03d}"
         folder = DATA_ROOT / "dataset" / exercise_name
-        ik_path = folder / "baseline.csv"
+        ik_path = folder / "canonical.csv"
     else:
         subject_name, exercise_name, video_name = ask_inputs()
         folder  = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
