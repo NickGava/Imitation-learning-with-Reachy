@@ -20,7 +20,7 @@ data cleaning phase.
 import csv
 from pathlib import Path
 
-from config import POSE_INDICES
+from utilities.config import POSE_INDICES
 
 # ---------------------------------------------------------------------------
 # Header

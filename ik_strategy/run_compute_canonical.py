@@ -20,9 +20,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from config import DATA_ROOT
+from utilities.config import DATA_ROOT
 from canonical_approach.compute_canonical import _process_exercise
-from plot_baseline_canonical import _fk_figure, _load_trajectory
+from utilities.plot_baseline_canonical import _fk_figure, _load_trajectory
 
 
 # ---------------------------------------------------------------------------

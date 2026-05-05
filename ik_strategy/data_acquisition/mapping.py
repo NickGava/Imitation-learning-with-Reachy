@@ -30,8 +30,8 @@ Output (same folder as input):
 import numpy as np
 import pandas as pd
 
-from config import DATA_ROOT, HEAD_NEUTRAL
-from ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT, HEAD_NEUTRAL
+from utilities.ask_inputs import ask_inputs
 
 # Reachy arm lengths (meters)
 REACHY_UPPER_ARM = 0.280    # shoulder -> elbow

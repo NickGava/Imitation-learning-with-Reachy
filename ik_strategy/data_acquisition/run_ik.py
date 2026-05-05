@@ -39,8 +39,8 @@ import pandas as pd
 import scipy.optimize as opt
 from scipy.signal import medfilt, savgol_filter
 
-from config import DATA_ROOT, JOINT_LIMITS_DEG, JOINT_LIMIT_PADDING_DEG, REST_DEG
-from ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG, JOINT_LIMIT_PADDING_DEG, REST_DEG
+from utilities.ask_inputs import ask_inputs
 
 # FK geometry: read from reachy.URDF
 _FK_JOINTS = [

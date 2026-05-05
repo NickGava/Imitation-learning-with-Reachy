@@ -26,8 +26,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from config import DATA_ROOT, JOINT_LIMITS_DEG
-from ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG
+from utilities.ask_inputs import ask_inputs
 
 #  Constants 
 # Joints to plot: (column_name, index_in_JOINT_LIMITS_DEG, side)

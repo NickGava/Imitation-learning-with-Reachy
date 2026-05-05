@@ -39,7 +39,7 @@ from typing import Optional, List
 from scipy.interpolate import interp1d
 from scipy.signal import medfilt, savgol_filter
 
-from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
+from utilities.config import DATA_ROOT, JOINT_COLS, HEAD_COLS
 
 OUTPUT_COLS = ['frame', 'timestamp'] + JOINT_COLS + HEAD_COLS
 

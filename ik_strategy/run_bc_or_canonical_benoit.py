@@ -47,8 +47,8 @@ from reachy_sdk.trajectory.interpolation import InterpolationMode
 import torch
 import torch.nn as nn
 
-from config import DATA_ROOT, REST_POSE, JOINT_COLS, HEAD_COLS
-from ik_strategy.plot_baseline_canonical import _fk_figure
+from utilities.config import DATA_ROOT, REST_POSE, JOINT_COLS, HEAD_COLS
+from utilities.plot_baseline_canonical import _fk_figure
 
 # ---------------------------------------------------------------------------
 # Constants

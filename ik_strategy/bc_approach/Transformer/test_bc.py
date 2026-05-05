@@ -43,7 +43,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from config import DATA_ROOT, JOINT_COLS
+from utilities.config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Constants

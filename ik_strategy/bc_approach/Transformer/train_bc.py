@@ -46,7 +46,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 
-from config import DATA_ROOT
+from utilities.config import DATA_ROOT
 
 # ---------------------------------------------------------------------------
 # Constants

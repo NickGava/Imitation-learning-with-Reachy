@@ -47,10 +47,10 @@ Notes:
 import time
 import numpy as np
 import pandas as pd
-from config import DATA_ROOT, HEAD_COLS
+from utilities.config import DATA_ROOT, HEAD_COLS
 import threading
 
-from ask_inputs import ask_inputs
+from utilities.ask_inputs import ask_inputs
 
 from reachy_sdk import ReachySDK
 from reachy_sdk.trajectory import goto

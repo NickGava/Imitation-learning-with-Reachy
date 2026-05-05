@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from pathlib import Path
 
-from config import DATA_ROOT, JOINT_COLS
+from utilities.config import DATA_ROOT, JOINT_COLS
 from data_acquisition.run_ik import fk
 
 Y_PADDING = 0.02    # metres of padding above/below the shared Y range

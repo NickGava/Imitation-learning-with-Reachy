@@ -7,8 +7,8 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-from ask_inputs import ask_inputs
-from config import DATA_ROOT, POSE_INDICES
+from utilities.ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT, POSE_INDICES
 from save_landmarks import init_csv_files
 from stereo_config import (
     LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, R, T,

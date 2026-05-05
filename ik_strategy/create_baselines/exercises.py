@@ -1,5 +1,5 @@
 from typing import List, Dict
-from config import STARTING_POSE
+from utilities.config import STARTING_POSE
 # ===========================================================================
 # EXERCISES DEFINITION
 # ===========================================================================

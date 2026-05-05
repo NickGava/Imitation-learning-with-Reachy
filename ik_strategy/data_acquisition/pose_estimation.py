@@ -22,9 +22,9 @@ Output:
 import cv2
 import mediapipe as mp
 
-from config import DATA_ROOT
+from utilities.config import DATA_ROOT
 from save_landmarks import init_csv_files, save_frame
-from ask_inputs import ask_inputs
+from utilities.ask_inputs import ask_inputs
 
 # Setup MediaPipe Pose
 mp_pose    = mp.solutions.pose

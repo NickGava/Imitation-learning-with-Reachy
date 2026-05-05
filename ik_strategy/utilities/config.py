@@ -10,7 +10,7 @@ from typing import Dict
 import numpy as np
 
 # Absolute path to the shared data folder
-DATA_ROOT = Path(__file__).resolve().parent / "_data"
+DATA_ROOT = Path(__file__).resolve().parent.parent / "_data"
 
 # ---------------------------------------------------------------------------
 # Default parameters

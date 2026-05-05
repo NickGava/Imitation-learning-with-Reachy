@@ -34,7 +34,7 @@ from reachy_sdk import ReachySDK
 from reachy_sdk.trajectory import goto
 from reachy_sdk.trajectory.interpolation import InterpolationMode
 
-from config import DATA_ROOT, REST_POSE, JOINT_COLS, HEAD_COLS
+from utilities.config import DATA_ROOT, REST_POSE, JOINT_COLS, HEAD_COLS
 from reachyController.reachyController import ReachyController
 import reachyController.timeSeries
 

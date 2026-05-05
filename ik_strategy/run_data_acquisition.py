@@ -33,7 +33,7 @@ import time
 import traceback
 from pathlib import Path
 
-from config import DATA_ROOT
+from utilities.config import DATA_ROOT
 
 # adds data_acquisition directory to Python path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "data_acquisition"))

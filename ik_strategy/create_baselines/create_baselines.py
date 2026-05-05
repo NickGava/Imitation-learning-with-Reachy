@@ -37,7 +37,7 @@ from reachy_sdk.trajectory import goto
 from reachy_sdk.trajectory.interpolation import InterpolationMode
 
 from data_acquisition.run_ik import fk
-from config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, REST_POSE, GRIPPER_RANGE, STARTING_POSE
+from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, REST_POSE, GRIPPER_RANGE, STARTING_POSE
 from create_baselines.exercises import EXERCISES
 
 # ---------------------------------------------------------------------------

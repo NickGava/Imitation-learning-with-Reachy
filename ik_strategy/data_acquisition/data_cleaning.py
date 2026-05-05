@@ -22,8 +22,8 @@ import math
 import numpy as np
 import pandas as pd
 import cv2
-from ask_inputs import ask_inputs
-from config import DATA_ROOT, DEFAULT_FPS
+from utilities.ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT, DEFAULT_FPS
 
 # ---------------------------------------------------------------------------
 # Tunable parameters

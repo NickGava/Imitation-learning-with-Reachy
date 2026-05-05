@@ -23,8 +23,8 @@ import time
 import cv2
 from reachy_sdk import ReachySDK
 
-from config import DATA_ROOT
-from ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT
+from utilities.ask_inputs import ask_inputs
 
 # ---------------------------------------------------------------------------
 # Settings

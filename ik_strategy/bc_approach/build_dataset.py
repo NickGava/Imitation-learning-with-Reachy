@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from config import DATA_ROOT, JOINT_COLS
+from utilities.config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Constants

@@ -24,8 +24,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from config import DATA_ROOT
-from ask_inputs import ask_inputs
+from utilities.config import DATA_ROOT
+from utilities.ask_inputs import ask_inputs
 
 Y_PADDING = 0.02    # metres of padding above/below the shared Y range
 

@@ -47,7 +47,7 @@ import torch.nn as nn
 from scipy.stats import pearsonr
 from tslearn.metrics import dtw_path
 
-from config import DATA_ROOT, JOINT_COLS
+from utilities.config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Column definitions
