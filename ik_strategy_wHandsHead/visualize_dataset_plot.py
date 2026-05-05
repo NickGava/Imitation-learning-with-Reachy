@@ -18,7 +18,7 @@ Output:
   _data/dataset/exercise_XXX/plots/canonical_fk.png
 
 Usage:
-  python visualize_fk_dataset.py --exercise 1
+  python visualize_dataset_plot.py --exercise 1
 '''
 
 import argparse
@@ -28,6 +28,11 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from config import DATA_ROOT, JOINT_COLS
+
+JOINT_COLS = [
+    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
+    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
+]
 from data_acquisition.run_ik import fk
 
 
@@ -52,15 +57,15 @@ def _fk_figure(trajectory: np.ndarray, exercise_num: int, label: str) -> plt.Fig
     l_wrist, l_elbow = [], []
 
     for q_deg in trajectory:
-        # Right arm: joints 0-6 (shoulder_pitch … wrist_roll)
-        q_r = np.deg2rad(q_deg[:7])
-        e_r, w_r, _ = fk(q_r, 'right')
+        # Right arm: joints 0-3 (shoulder_pitch … elbow_pitch); pad to 7 for fk()
+        q_r = np.deg2rad(np.pad(q_deg[:4], (0, 3)))
+        e_r, w_r = fk(q_r, 'right')
         r_elbow.append(e_r)
         r_wrist.append(w_r)
 
-        # Left arm: joints 8-14
-        q_l = np.deg2rad(q_deg[8:15])
-        e_l, w_l, _ = fk(q_l, 'left')
+        # Left arm: joints 4-7; pad to 7 for fk()
+        q_l = np.deg2rad(np.pad(q_deg[4:8], (0, 3)))
+        e_l, w_l = fk(q_l, 'left')
         l_elbow.append(e_l)
         l_wrist.append(w_l)
 

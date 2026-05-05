@@ -4,7 +4,7 @@ from reachy_sdk.trajectory.interpolation import InterpolationMode
 import time
 
 print("Connessione a Reachy...")
-reachy = ReachySDK(host="10.59.1.20")
+reachy = ReachySDK(host="localhost")
 
 if reachy.r_arm is None or reachy.l_arm is None:
     print("❌ Impossible to connect")
@@ -77,6 +77,8 @@ def be_happy():
     reachy.head.l_antenna.goal_position = 0.0
     reachy.head.r_antenna.goal_position = 0.0
     
+joint = reachy.r_arm.r_shoulder_pitch
+print(dir(joint))  # lista tutti gli attributi disponibili    
     
 be_happy()
 time.sleep(2)   

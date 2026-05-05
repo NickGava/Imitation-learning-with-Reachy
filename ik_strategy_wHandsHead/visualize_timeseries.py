@@ -28,15 +28,15 @@ from ask_inputs import ask_inputs
 
 # Pose
 POSE_GROUPS = {
-    'Right side': ['nose', 'right_shoulder', 'right_elbow', 'right_wrist'],
-    'Left side':  ['nose', 'left_shoulder',  'left_elbow',  'left_wrist'],
+    'Right side': ['right_shoulder', 'right_elbow', 'right_wrist'],
+    'Left side':  ['left_shoulder',  'left_elbow',  'left_wrist'],
 }
 
 # Hand
 HAND_JOINTS = ['wrist', 'index_mcp', 'pinky_mcp', 'thumb_tip', 'index_tip']
 
 # Spatial dimensions plotted
-DIMS = [('x', 'X (m)'), ('y', 'Y (m)'), ('z', 'Z (m)')]
+DIMS = [('x', 'X - Left/Right (m)'), ('y', 'Y - Up/Down (m)'), ('z', 'Z - Forward/Backward (m)')]
 
 # Visual style
 _COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
@@ -185,10 +185,11 @@ def main():
 
     # Load data
     df_pose  = load_csv(landmarks_folder / 'pose_cleaned.csv')
-    df_rhand = load_csv(landmarks_folder / 'right_hand_cleaned.csv')
-    df_lhand = load_csv(landmarks_folder / 'left_hand_cleaned.csv')
+    # df_rhand = load_csv(landmarks_folder / 'right_hand_cleaned.csv')
+    # df_lhand = load_csv(landmarks_folder / 'left_hand_cleaned.csv')
 
-    if df_pose.empty and df_rhand.empty and df_lhand.empty:
+    # if df_pose.empty and df_rhand.empty and df_lhand.empty:
+    if df_pose.empty:
         print("No data found. Check subject, exercise and video numbers.")
         return
 
@@ -199,23 +200,24 @@ def main():
     if not df_pose.empty:
         fig = build_pose_figure(df_pose, title)
         path = output_dir / 'pose.png'
+        # plt.show()
         fig.savefig(path, dpi=150, bbox_inches='tight')
         plt.close(fig)
         print(f"Saved: {path}")
 
-    if not df_rhand.empty:
-        fig = build_hand_figure(df_rhand, 'Right Hand', title)
-        path = output_dir / 'right_hand.png'
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        print(f"Saved: {path}")
+    # if not df_rhand.empty:
+    #     fig = build_hand_figure(df_rhand, 'Right Hand', title)
+    #     path = output_dir / 'right_hand.png'
+    #     fig.savefig(path, dpi=150, bbox_inches='tight')
+    #     plt.close(fig)
+    #     print(f"Saved: {path}")
 
-    if not df_lhand.empty:
-        fig = build_hand_figure(df_lhand, 'Left Hand', title)
-        path = output_dir / 'left_hand.png'
-        fig.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        print(f"Saved: {path}")
+    # if not df_lhand.empty:
+    #     fig = build_hand_figure(df_lhand, 'Left Hand', title)
+    #     path = output_dir / 'left_hand.png'
+    #     fig.savefig(path, dpi=150, bbox_inches='tight')
+    #     plt.close(fig)
+    #     print(f"Saved: {path}")
 
     print("Done.")
 

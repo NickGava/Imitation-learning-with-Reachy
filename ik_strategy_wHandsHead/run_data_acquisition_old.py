@@ -6,8 +6,10 @@ Runs all processing steps in order for one or more videos.
 Steps (in order):
   1. pose_estimation.py / pose_estimation_stereo.py  (auto-detected)
   2. data_cleaning.py
-  3. mapping.py
-  4. run_ik.py
+  3. face_processing.py
+  4. hand_processing.py
+  5. mapping.py
+  6. run_ik.py
 
 Stereo auto-detection:
   video_XXX.mp4        -> pose_estimation.py
@@ -41,11 +43,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "data_acquisition"))
 # Pipeline steps — step 1 module is filled in dynamically per video
 STEPS = [
     (1, "Pose Estimation",  None),          # module_name resolved at runtime
-    (2, "Data Cleaning",    "data_cleaning"),
-    (3, "Mapping",          "mapping"),
-    (4, "IK Solver",        "run_ik"),
-    (5, "Plot pose",        "plot_pose"),
-    (6, "Plot joints",       "plot_joints"),
+    (2, "Data Cleaning",    "data_cleaning_old"),
+    (3, "Face Processing",  "face_processing"),
+    (4, "Hand Processing",  "hand_processing"),
+    (5, "Mapping",          "mapping_old"),
+    (6, "IK Solver",        "run_ik_old"),
 ]
 
 RAW_ROOT = DATA_ROOT / "raw_data"
@@ -215,7 +217,7 @@ def _run_pipeline(subject: str, exercise: str, video: str,
                   use_stereo: bool, start: int, stop: int) -> dict:
     """Runs the full pipeline for a single video. Returns {step_num: ok}."""
 
-    step1_module = "pose_estimation_stereo" if use_stereo else "pose_estimation"
+    step1_module = "pose_estimation_stereo_old" if use_stereo else "pose_estimation_old"
     step1_label  = "Pose Estimation (stereo)" if use_stereo else "Pose Estimation (mono)"
 
     steps = [(num, name if num != 1 else step1_label,
@@ -248,9 +250,9 @@ def main():
     parser.add_argument("--exercise", type=int, default=None)
     parser.add_argument("--video",    type=int, default=None)
     parser.add_argument("--start", type=int, default=1, metavar="N",
-                        help="Start from step N (1-5). Default: 1")
+                        help="Start from step N (1-6). Default: 1")
     parser.add_argument("--stop",  type=int, default=6, metavar="N",
-                        help="Stop after step N (1-5). Default: 5")
+                        help="Stop after step N (1-6). Default: 6")
     args = parser.parse_args()
 
     try:

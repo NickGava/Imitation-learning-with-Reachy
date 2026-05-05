@@ -30,7 +30,7 @@ from config import DATA_ROOT, DEFAULT_FPS
 # ---------------------------------------------------------------------------
 
 # Visibility filter (pose only)
-MIN_VISIBILITY = 0           # frames where any joint is below this are dropped
+MIN_VISIBILITY = 0.5           # frames where any joint is below this are dropped
 
 # Jump detection
 JUMP_FACTOR = 1.5               # drop frame if displacement > JUMP_FACTOR × median displacement
@@ -155,6 +155,7 @@ def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
             coords[left_idx + k] = (1 - alpha) * coords[left_idx] + alpha * coords[right_idx]
 
         n_fixed += n_interp
+        print(f"  block [{left_idx+1}..{right_idx-1}] ({n_interp} frames) interpolated")
 
     if n_fixed:
         print(f"jump frames interpolated: {n_fixed} (threshold={thresh:.5f}, median={median:.5f})")
@@ -239,7 +240,10 @@ def main():
     print(f"\nFPS: {fps:.1f}\n")
 
     files = {
-        'pose': True,   # is_pose=True -> enables visibility filter
+        'pose':       True,     # is_pose=True → enables visibility filter
+        'right_hand': False,
+        'left_hand':  False,
+        'face':       False,    
     }
 
     for name, is_pose in files.items():

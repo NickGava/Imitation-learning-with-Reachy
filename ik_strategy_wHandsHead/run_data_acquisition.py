@@ -44,8 +44,7 @@ STEPS = [
     (2, "Data Cleaning",    "data_cleaning"),
     (3, "Mapping",          "mapping"),
     (4, "IK Solver",        "run_ik"),
-    (5, "Plot pose",        "plot_pose"),
-    (6, "Plot joints",       "plot_joints"),
+    (5, "Visualize timeseries",        "visualize_timeseries"),
 ]
 
 RAW_ROOT = DATA_ROOT / "raw_data"
@@ -249,7 +248,7 @@ def main():
     parser.add_argument("--video",    type=int, default=None)
     parser.add_argument("--start", type=int, default=1, metavar="N",
                         help="Start from step N (1-5). Default: 1")
-    parser.add_argument("--stop",  type=int, default=6, metavar="N",
+    parser.add_argument("--stop",  type=int, default=5, metavar="N",
                         help="Stop after step N (1-5). Default: 5")
     args = parser.parse_args()
 

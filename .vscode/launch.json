@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run pipeline (run_data_acquisition)",
+            "type": "debugpy",
+            "request": "launch",
+
+            "program": "${workspaceFolder}/ik_strategy/run_data_acquisition.py",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+
+            "console": "integratedTerminal"
+        }
+    ]
+}

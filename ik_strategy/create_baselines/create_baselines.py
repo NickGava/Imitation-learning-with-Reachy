@@ -37,7 +37,7 @@ from reachy_sdk.trajectory import goto
 from reachy_sdk.trajectory.interpolation import InterpolationMode
 
 from data_acquisition.run_ik import fk
-from config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, REST_POSE, GRIPPER_RANGE
+from config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, REST_POSE, GRIPPER_RANGE, STARTING_POSE
 from create_baselines.exercises import EXERCISES
 
 # ---------------------------------------------------------------------------
@@ -73,41 +73,45 @@ def _expand_keyframes(keyframes: List[Dict], fps: int) -> np.ndarray:
     Converts a list of keyframe dicts into a full trajectory array.
 
     Parameters:
-        keyframes : list of dicts, each with 'duration' and joint angle values.
+        keyframes : list of dicts.
+                    keyframes[0] has NO 'duration' and defines the starting pose
+                    (the trajectory begins here, with no interpolation from STARTING_POSE).
+                    All subsequent keyframes must have 'duration' and are interpolated
+                    from the previous pose using a minimum-jerk profile.
                     Unspecified joints inherit from the previous keyframe.
-                    The first keyframe must specify all joints (or use REST_POSE).
         fps       : frames per second
 
     Returns:
         trajectory : (N_total_frames, 16) array of joint angles in degrees
     '''
-    # Build full pose array for each keyframe
-    poses = []
-    prev_pose = np.array([REST_POSE[c] for c in JOINT_COLS], dtype=float)
-
-    for kf in keyframes:
-        pose = prev_pose.copy()
+    def _apply_kf(kf: Dict, base: np.ndarray) -> np.ndarray:
+        '''Apply a keyframe dict on top of a base pose, return new pose.'''
+        pose = base.copy()
         for i, col in enumerate(JOINT_COLS):
             if col in kf:
                 pose[i] = float(kf[col])
         if 'gripper_open' in kf:
-            pose[7] = GRIPPER_RANGE['right_hand']['open'] if kf['gripper_open'] else GRIPPER_RANGE['right_hand']['closed']
-            pose[15] = GRIPPER_RANGE['left_hand']['open'] if kf['gripper_open'] else GRIPPER_RANGE['left_hand']['closed']
-        poses.append(pose)
-        prev_pose = pose
+            pose[7]  = GRIPPER_RANGE['right_hand']['open'] if kf['gripper_open'] else GRIPPER_RANGE['right_hand']['closed']
+            pose[15] = GRIPPER_RANGE['left_hand']['open']  if kf['gripper_open'] else GRIPPER_RANGE['left_hand']['closed']
+        return pose
 
-    # Interpolate between consecutive poses
-    segments = []
-    q_prev   = np.array([REST_POSE[c] for c in JOINT_COLS], dtype=float)
+    default_pose = np.array([STARTING_POSE[c] for c in JOINT_COLS], dtype=float)
 
-    for i, (kf, q_end) in enumerate(zip(keyframes, poses)):
+    # --- First keyframe: starting pose (no interpolation) ---
+    q_start  = _apply_kf(keyframes[0], default_pose)
+    segments = [q_start[None, :]]   # single frame
+    q_prev   = q_start
+
+    # --- Remaining keyframes: interpolate ---
+    for kf in keyframes[1:]:
+        q_end    = _apply_kf(kf, q_prev)
         duration = float(kf.get('duration', 1.0))
         seg      = _interpolate_segment(q_prev, q_end, duration, fps)
         segments.append(seg)
-        q_prev = q_end
+        q_prev   = q_end
 
     # Add the final pose as the last frame
-    segments.append(poses[-1][None, :])
+    segments.append(q_prev[None, :])
 
     return np.vstack(segments)   # shape: (N, 16)
 
@@ -206,60 +210,6 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Preview on Reachy simulator
-# ---------------------------------------------------------------------------
-def _preview_on_reachy(trajectory: np.ndarray, fps: int, host: str) -> None:
-    '''
-    Sends the trajectory to Reachy (Unity simulator) frame by frame.
-    Allows visual verification before saving.
-    '''
-    delay = 1.0 / fps
-    print(f'Connecting to Reachy at {host} ...')
-    reachy = ReachySDK(host=host)
-    reachy.turn_on('r_arm')
-    reachy.turn_on('l_arm')
-    reachy.turn_on('head')
-
-    # --- Move to first frame ---
-    first = trajectory[0]
-    goal  = {}
-    for i, col in enumerate(JOINT_COLS):
-        arm   = reachy.r_arm if col.startswith('r_') else reachy.l_arm
-        joint = getattr(arm, col, None)
-        if joint is not None:
-            goal[joint] = float(first[i])
-    goto(goal, duration=2.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
-    time.sleep(2.0)
-
-    # --- Play trajectory ---
-    print(f'Playing {len(trajectory)} frames at {fps} fps ...')
-    for i, q_deg in enumerate(trajectory):
-        for j, col in enumerate(JOINT_COLS):
-            arm   = reachy.r_arm if col.startswith('r_') else reachy.l_arm
-            joint = getattr(arm, col, None)
-            if joint is not None:
-                joint.goal_position = float(q_deg[j])
-
-        reachy.head.look_at(*HEAD_NEUTRAL, duration=delay, interpolation_mode=InterpolationMode.MINIMUM_JERK)
-        time.sleep(delay)
-
-    # -- Return to rest ---
-    rest_goal = {}
-    for i, col in enumerate(JOINT_COLS):
-        arm   = reachy.r_arm if col.startswith('r_') else reachy.l_arm
-        joint = getattr(arm, col, None)
-        if joint is not None:
-            rest_goal[joint] = REST_POSE[col]
-    goto(rest_goal, duration=2.0, interpolation_mode=InterpolationMode.MINIMUM_JERK)
-    time.sleep(2.0)
-
-    reachy.turn_off_smoothly('r_arm')
-    reachy.turn_off_smoothly('l_arm')
-    reachy.turn_off_smoothly('head')
-    print('Preview complete.')
-
-
-# ---------------------------------------------------------------------------
 # Save
 # ---------------------------------------------------------------------------
 def _save_baseline(trajectory: np.ndarray, fps: int, exercise_num: int, output_dir: Path) -> Path:
@@ -281,9 +231,6 @@ def _save_baseline(trajectory: np.ndarray, fps: int, exercise_num: int, output_d
     return path
 
 
-
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -291,9 +238,6 @@ def main():
     parser = argparse.ArgumentParser(description='Create baseline trajectory from keyframes.')
     parser.add_argument('--exercise', type=int, required=True, help='Exercise number (must be defined in EXERCISES dict).')
     parser.add_argument('--fps', type=int, default=DEFAULT_FPS, help=f'Frame rate (default: {DEFAULT_FPS}).')
-    parser.add_argument('--preview', action='store_true', help='Send trajectory to Reachy simulator before saving.')
-    parser.add_argument('--host', type=str, default='localhost', help='ReachySDK host for preview (default: localhost).')
-    parser.add_argument('--plot-only', action='store_true', help='Plot FK verification without saving the CSV.')
     args = parser.parse_args()
 
     if args.exercise not in EXERCISES:
@@ -324,16 +268,6 @@ def main():
     # --- FK verification plot ---
     print('\nPlotting FK verification ...')
     _plot_fk_verification(trajectory, args.exercise)
-
-    if args.plot_only:
-        print('\n--plot-only: skipping save and preview.')
-        return
-
-    # --- Preview on Reachy ---
-    if args.preview:
-        answer = input('\nSend to Reachy simulator for preview? [y/N] ').strip().lower()
-        if answer == 'y':
-            _preview_on_reachy(trajectory, args.fps, args.host)
 
     # --- Save ---
     answer = input('\nSave as baseline.csv? [y/N] ').strip().lower()

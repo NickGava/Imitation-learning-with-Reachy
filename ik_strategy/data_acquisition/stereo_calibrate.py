@@ -34,11 +34,24 @@ from reachy_sdk import ReachySDK
 # ---------------------------------------------------------------------------
 ROBOT_IP       = "10.59.1.20"
 CHECKERBOARD   = (9, 6)          # inner corners (cols, rows)
-SQUARE_SIZE_M  = 0.022           # metres - measure your printed board!
+SQUARE_SIZE_M  = 0.25           # metres - measure your printed board!
 MIN_PAIRS      = 15              # minimum valid pairs before calibration runs
 SAVE_PATH      = Path("stereo_calib.npz")
 DISPLAY_WIDTH  = 500
 # ---------------------------------------------------------------------------
+
+def _is_good_sample(corners, img_shape):
+    h, w = img_shape
+    xs = corners[:,0,0]
+    ys = corners[:,0,1]
+
+    # copertura minima area
+    if (xs.max() - xs.min()) < w * 0.3:
+        return False
+    if (ys.max() - ys.min()) < h * 0.3:
+        return False
+
+    return True
 
 def main():
     print(f"Connecting to Reachy at {ROBOT_IP}…")
@@ -74,18 +87,18 @@ def main():
         gray_L = cv2.cvtColor(left,  cv2.COLOR_BGR2GRAY)
         gray_R = cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)
 
-        ret_L, corners_L = cv2.findChessboardCorners(gray_L, CHECKERBOARD, None)
-        ret_R, corners_R = cv2.findChessboardCorners(gray_R, CHECKERBOARD, None)
+        ret_L, corners_L = cv2.findChessboardCornersSB(gray_L, CHECKERBOARD, None)
+        ret_R, corners_R = cv2.findChessboardCornersSB(gray_R, CHECKERBOARD, None)
 
         preview_L = left.copy()
         preview_R = right.copy()
 
         now = time.time()
-        if ret_L and ret_R and (now - last_capture) > CAPTURE_COOLDOWN:
+        if ret_L and ret_R and _is_good_sample(corners_L, gray_L.shape) and (now - last_capture) > CAPTURE_COOLDOWN:
             # Sub-pixel refinement
             corners_L = cv2.cornerSubPix(gray_L, corners_L, (11,11), (-1,-1), criteria)
             corners_R = cv2.cornerSubPix(gray_R, corners_R, (11,11), (-1,-1), criteria)
-            obj_pts.append(objp)
+            obj_pts.append(objp.copy())
             img_pts_L.append(corners_L)
             img_pts_R.append(corners_R)
             last_capture = now
@@ -99,6 +112,8 @@ def main():
         for img in (preview_L, preview_R):
             cv2.putText(img, f"Pairs: {n}  (need {MIN_PAIRS})  Q=done", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
+        if preview_L.shape != preview_R.shape:
+            preview_R = cv2.resize(preview_R, (preview_L.shape[1], preview_L.shape[0]))
         side_by_side = np.hstack([preview_L, preview_R])
         dh = int(left.shape[0] * DISPLAY_WIDTH / left.shape[1])
         shown = cv2.resize(side_by_side, (DISPLAY_WIDTH * 2, dh))
@@ -120,7 +135,7 @@ def main():
     _, K_R, D_R, _, _ = cv2.calibrateCamera(obj_pts, img_pts_R, img_size, None, None)
 
     # Stereo calibration
-    flags = (cv2.CALIB_FIX_INTRINSIC)      # keep individual calibrations fixed
+    flags = cv2.CALIB_FIX_INTRINSIC | cv2.CALIB_RATIONAL_MODEL
     rms, K_L, D_L, K_R, D_R, R, T, E, F = cv2.stereoCalibrate(
         obj_pts, img_pts_L, img_pts_R,
         K_L, D_L, K_R, D_R,

@@ -68,12 +68,12 @@ T = np.array([-0.074286,  0.00185, -0.001255], dtype=np.float64)
 # ---------------------------------------------------------------------------
 # StereoSGBM parameters (tune for your scene / lighting)
 # ---------------------------------------------------------------------------
-SGBM_MIN_DISP    =  5
-SGBM_NUM_DISP    =  48    # must be divisible by 16 (più alto = più profondità ma più lento)
-SGBM_BLOCK_SIZE  =  15    # large block = robust on low-texture clothing/skin
+SGBM_MIN_DISP    =  0
+SGBM_NUM_DISP    =  32    # must be divisible by 16 (più alto = più profondità ma più lento)
+SGBM_BLOCK_SIZE  =  11    # large block = robust on low-texture clothing/skin
 SGBM_P1          =   8 * 3 * SGBM_BLOCK_SIZE ** 2   # scales with blockSize²
 SGBM_P2          =  32 * 3 * SGBM_BLOCK_SIZE ** 2
 SGBM_DISP12DIFF  =  -1    # disabled — L-R check was rejecting too many valid pixels
-SGBM_UNIQUENESS  =  21    # very lenient — maximise coverage on low-texture areas
+SGBM_UNIQUENESS  =  25    # very lenient — maximise coverage on low-texture areas
 SGBM_SPECKLE_WIN = 100
 SGBM_SPECKLE_RNG =   2    # tolleranza per considerare pixel come “rumore”

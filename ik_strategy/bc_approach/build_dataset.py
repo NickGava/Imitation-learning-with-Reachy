@@ -1,272 +1,154 @@
 '''
 build_dataset.py
 =============================================================================
-Builds the state-action pair dataset for Behavioral Cloning training.
+Builds the behavioral cloning training dataset for a single exercise.
+Shared between MLP and GRU approaches — both consume the same CSV.
 
-For each exercise, crawls all joint_ik.csv files and converts them into
-state-action pairs. One output file is produced per exercise.
+Crawls all joint_ik.csv files for the requested exercise (all subjects,
+all videos) and assembles them into a single bc_dataset.csv.
 
-State-action formulation:
-  state  = q(i)            shape: (16,)   joint angles
-  vel    = q(i) - q(i-1)   shape: (16,)   velocity
-  action = q(i+1) - q(i)   shape: (16,)   delta to apply (model target)
+Each row represents one timestep:
+  - Metadata : subject, exercise, video, frame, timestamp
+  - State    : current joint positions q(t)              [8 values]
+               joint velocity q(t) - q(t-VELOCITY_LAG)   [8 values]
+  - Action   : joint delta q(t+1) - q(t)                 [8 values]
 
-Head gaze (head_x/y/z) is included in the state as optional context.
-By default NOT included in the action (head handled via lookAt).
-Use --head-action to predict head deltas too (needed for neck exercises).
-  Default:         state=[q,vel,head] 35v  action=[Dq] 16v
-  --head-action:   state=[q,vel,head] 35v  action=[Dq,Dhead] 19v
-  --no-head:       state=[q,vel]      32v  action=[Dq] 16v
+The first VELOCITY_LAG and last 1 frames of each video are dropped.
 
-Input: data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv
+--- Input ---
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv
 
-Output: data/dataset/exercise_XXX/bc_dataset.csv
+--- Output ---
+  data/dataset/exercise_XXX/bc_dataset.csv
 
 Usage:
-  # process all exercises, all subjects
-  python build_dataset.py
-
-  # only exercise 1
-  python build_dataset.py --exercise 1
-
-  # only subject 2, exercise 1
-  python build_dataset.py --exercise 1 --subject 2
-
-  # exclude head gaze from state
-  python build_dataset.py --no-head
+  py -m bc_approach.build_dataset 1
 '''
 
 import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Optional
 
-from config import DATA_ROOT, JOINT_COLS, HEAD_COLS
-
-N_JOINTS  = len(JOINT_COLS)   # 16
+from config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
-# Per-csv builder
+# Constants
 # ---------------------------------------------------------------------------
-def _build_pairs_from_csv(df: pd.DataFrame, subject: int, exercise: int, video: int, include_head: bool, head_action: bool) -> pd.DataFrame:
-    '''
-    Converts a single joint_ik.csv DataFrame into state-action pairs.
+N_JOINTS = len(JOINT_COLS)  # 8
 
-    Parameters:
-        df           : joint_ik.csv loaded as a DataFrame
-        subject      : subject number
-        exercise     : exercise number
-        video        : video number
-        include_head : whether to include head gaze columns in the state
-        head_action  : whether to include head gaze delta in the action
+# How many frames back to compute velocity.
+# Must match VELOCITY_LAG in MLP/test_bc.py.
+VELOCITY_LAG = 5
 
-    Returns:
-        DataFrame with one row per valid frame (frames 1 to N-2), or empty DataFrame if fewer than 3 usable frames.
-    '''
-    # Drop rows where any joint column is NaN
-    df = df.dropna(subset=JOINT_COLS).reset_index(drop=True)
+# Clip velocity features to this range (degrees).
+VEL_CLIP = 10.0
 
-    n = len(df)
-    if n < 3:
-        print(f'[SKIP] only {n} clean frames (need >= 3)')
-        return pd.DataFrame()
+META_COLS   = ['subject', 'exercise', 'video', 'frame', 'timestamp']
+STATE_COLS  = [f'q_{j}'  for j in JOINT_COLS]   # current position
+VEL_COLS    = [f'dq_{j}' for j in JOINT_COLS]   # q(t) - q(t-VELOCITY_LAG)
+ACTION_COLS = [f'act_{j}' for j in JOINT_COLS]  # q(t+1) - q(t)
 
-    q = df[JOINT_COLS].values   # shape: (N, 16)
-    
-    # Valid indices: 1 to N-2 inclusive
-    idx = np.arange(1, n - 1)
-
-    q_curr = q[idx]             # pose at i        shape: (N-2, 16)
-    q_prev = q[idx - 1]         # pose at i-1      shape: (N-2, 16)
-    q_next = q[idx + 1]         # pose at i+1      shape: (N-2, 16)
-
-    vel    = q_curr - q_prev    # velocity
-    action = q_next - q_curr    # delta
-
-    # Assemble output DataFrame
-    out = pd.DataFrame({
-        'subject':   subject,
-        'exercise':  exercise,
-        'video':     video,
-        'frame':     df['frame'].values[idx],
-        'timestamp': df['timestamp'].values[idx],
-    })
-
-    # State: absolute pose
-    for j, col in enumerate(JOINT_COLS):
-        out[f'state_{col}'] = q_curr[:, j]
-
-    # State: approximate velocity
-    for j, col in enumerate(JOINT_COLS):
-        out[f'vel_{col}'] = vel[:, j]
-
-    # Optional: head gaze context (not predicted, just conditioning)
-    if include_head:
-        for col in HEAD_COLS:
-            if col in df.columns:
-                out[col] = df[col].values[idx]
-            else:
-                out[col] = np.nan
-
-    # Action: joint deltas (degrees)
-    for j, col in enumerate(JOINT_COLS):
-        out[f'action_{col}'] = action[:, j]
-
-    # Action: head gaze delta (meters), only if --head-action
-    if head_action:
-        for col in HEAD_COLS:
-            if col in df.columns:
-                head_curr = df[col].values[idx]
-                head_next = df[col].values[idx + 1]
-                out[f'action_{col}'] = head_next - head_curr
-            else:
-                out[f'action_{col}'] = np.nan
-
-    return out
+OUTPUT_COLS = META_COLS + STATE_COLS + VEL_COLS + ACTION_COLS
 
 
 # ---------------------------------------------------------------------------
-# Per-exercise processor
+# Core: process one joint_ik.csv
 # ---------------------------------------------------------------------------
-def _process_exercise(exercise_num: int, landmarks_root: Path, dataset_root: Path, filter_subject: Optional[int], include_head: bool, head_action: bool,) -> None:
-    '''
-    Crawls all subjects and videos for a single exercise, builds the
-    state-action dataset and saves it.
+def process_file(path: Path, subject: int, exercise: int, video: int):
+    """
+    Reads one joint_ik.csv and returns a DataFrame of (state, action) pairs.
+    Returns None if the file has fewer than VELOCITY_LAG + 2 frames.
+    """
+    df = pd.read_csv(path)
 
-    Parameters:
-        exercise_num   : exercise number to process
-        landmarks_root : root of the landmarks folder
-        dataset_root   : root of the dataset output folder
-        filter_subject : if set, only process this subject number
-        include_head   : whether to include head gaze in the state
-        head_action    : whether to include head gaze delta in the action
-    '''
-    exercise_name = f'exercise_{exercise_num:03d}'
-    print(f'\n{"="*60}')
-    print(f'  Exercise {exercise_num:03d}')
-    print(f'{"="*60}')
+    min_frames = VELOCITY_LAG + 2
+    if len(df) < min_frames:
+        print(f'  [SKIP] {path} — fewer than {min_frames} frames ({len(df)})')
+        return None
 
-    all_dfs   = []
-    n_videos  = 0
-    n_skipped = 0
+    if not all(c in df.columns for c in JOINT_COLS):
+        print(f'  [SKIP] {path} — missing joint columns')
+        return None
 
-    subject_dirs = sorted(landmarks_root.glob('subject_*'))     # search for subject_001, subject_002, ...
-    if not subject_dirs:
-        print(f'No subject folders found under {landmarks_root}')
-        return
+    q = df[JOINT_COLS].values  # (N, 8)
 
-    for subj_dir in subject_dirs:
-        subject_num = int(subj_dir.name.split('_')[1])
+    rows = []
+    for t in range(VELOCITY_LAG, len(df) - 1):
+        state    = q[t]
+        velocity = np.clip(q[t] - q[t - VELOCITY_LAG], -VEL_CLIP, VEL_CLIP)
+        action   = q[t + 1] - q[t]
+        meta = [
+            subject, exercise, video,
+            int(df.loc[df.index[t], 'frame']),
+            float(df.loc[df.index[t], 'timestamp']),
+        ]
+        rows.append(meta + list(state) + list(velocity) + list(action))
 
-        if filter_subject is not None and subject_num != filter_subject:
-            continue
-
-        exer_dir = subj_dir / exercise_name
-        if not exer_dir.is_dir():
-            continue
-
-        for video_dir in sorted(exer_dir.glob('video_*')):
-            video_num = int(video_dir.name.split('_')[1])
-            ik_path   = video_dir / 'joint_ik.csv'
-
-            print(f'  subject_{subject_num:03d} / {exercise_name} / video_{video_num:03d} ... ', end='', flush=True)
-
-            if not ik_path.exists():
-                print('MISSING joint_ik.csv')
-                n_skipped += 1
-                continue
-
-            df    = pd.read_csv(ik_path)
-            pairs = _build_pairs_from_csv(df, subject_num, exercise_num, video_num, include_head, head_action)
-
-            if pairs.empty:
-                n_skipped += 1
-                continue
-
-            print(f'{len(pairs)} samples')
-            all_dfs.append(pairs)
-            n_videos += 1
-
-    if not all_dfs:
-        print(f'No data collected for exercise {exercise_num:03d}.')
-        return
-
-    dataset = pd.concat(all_dfs, ignore_index=True)
-
-    # Save
-    output_dir  = dataset_root / exercise_name
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / 'bc_dataset.csv'
-    dataset.to_csv(output_path, index=False)
-
-    # Summary
-    state_dim  = N_JOINTS * 2 + (3 if include_head else 0)
-    action_dim = N_JOINTS + (3 if head_action else 0)
-    print(f'\n  Videos processed : {n_videos}  |  skipped: {n_skipped}')
-    print(f'  Total samples    : {len(dataset)}')
-    print(f'  Subjects         : {sorted(dataset["subject"].unique())}')
-    print(f'  State dimension  : {state_dim} ({N_JOINTS} pose + {N_JOINTS} vel{" + 3 head" if include_head else ""})')
-    print(f'  Action dimension : {action_dim} ({N_JOINTS} joints{" + 3 head" if head_action else ""})')
-    print(f'  Saved -> {output_path.relative_to(DATA_ROOT)}')
+    return pd.DataFrame(rows, columns=OUTPUT_COLS)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description='Build state-action BC dataset from joint_ik.csv files.')
-    parser.add_argument('--exercise', type=int, default=None, help='Only process this exercise number. Default: all exercises found in landmarks/.')
-    parser.add_argument('--subject', type=int, default=None, help='Only process this subject number. Default: all subjects.')
-    parser.add_argument('--no-head', action='store_true', help='Exclude head gaze columns (head_x/y/z) from the state.')
-    parser.add_argument('--head-action', action='store_true', help='Include head gaze delta (action_head_x/y/z) in the action. ' \
-                                                                    'Required for neck exercises. Automatically includes head in the state.')
+    parser = argparse.ArgumentParser(description='Build BC dataset for one exercise.')
+    parser.add_argument('exercise', type=int, help='Exercise number (e.g. 1)')
     args = parser.parse_args()
 
+    exercise_num   = args.exercise
+    exercise_name  = f'exercise_{exercise_num:03d}'
     landmarks_root = DATA_ROOT / 'landmarks'
-    dataset_root   = DATA_ROOT / 'dataset'
-    if not landmarks_root.is_dir():
-        print(f'Error: landmarks folder not found -> {landmarks_root}')
+    output_dir     = DATA_ROOT / 'dataset' / exercise_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path    = output_dir / 'bc_dataset.csv'
+
+    print(f'Building BC dataset for {exercise_name}')
+    print(f'Scanning: {landmarks_root}\n')
+
+    pattern   = f'*/exercise_{exercise_num:03d}/*/joint_ik.csv'
+    all_files = sorted(landmarks_root.glob(pattern))
+
+    if not all_files:
+        print(f'No joint_ik.csv files found for {exercise_name}.')
+        print(f'Expected pattern: {landmarks_root / pattern}')
         return
 
-    head_action  = args.head_action
-    include_head = (not args.no_head) or head_action   # head in state implied when --head-action = True
-    print(f'Landmarks root  : {landmarks_root}')
-    print(f'Dataset root    : {dataset_root}')
-    print(f'Head in state   : {include_head}')
-    print(f'Head in action  : {head_action}')
+    print(f'Found {len(all_files)} file(s):\n')
 
-    # Collect exercise numbers to process
-    if args.exercise is not None:
-        exercise_nums = [args.exercise]
-    else:
-        # Auto-discover all exercises present in any subject folder
-        found = set()
-        for subj_dir in landmarks_root.glob('subject_*'):
-            for exer_dir in subj_dir.glob('exercise_*'):
-                found.add(int(exer_dir.name.split('_')[1]))
-        exercise_nums = sorted(found)
+    all_dfs      = []
+    total_frames = 0
 
-    if not exercise_nums:
-        print('No exercises found. Check that joint_ik.csv files exist.')
+    for path in all_files:
+        parts = path.parts
+        try:
+            subject_num = int(parts[-4].split('_')[-1])
+            video_num   = int(parts[-2].split('_')[-1])
+        except (IndexError, ValueError):
+            print(f'  [SKIP] {path} — unexpected folder structure')
+            continue
+
+        print(f'  subject={subject_num:03d}  video={video_num:03d}  →  {path.name}')
+        df = process_file(path, subject_num, exercise_num, video_num)
+
+        if df is not None:
+            all_dfs.append(df)
+            total_frames += len(df)
+            print(f'           {len(df)} samples')
+
+    if not all_dfs:
+        print('\nNo valid data found. Dataset not saved.')
         return
 
-    print(f'Exercises found: {exercise_nums}')
+    dataset = pd.concat(all_dfs, ignore_index=True)
+    dataset.to_csv(output_path, index=False)
 
-    # Process each exercise independently
-    for exercise_num in exercise_nums:
-        _process_exercise(
-            exercise_num   = exercise_num,
-            landmarks_root = landmarks_root,
-            dataset_root   = dataset_root,
-            filter_subject = args.subject,
-            include_head   = include_head,
-            head_action    = head_action,
-        )
-
-    print(f'\n{"="*60}')
-    print('  Done.')
-    print(f'{"="*60}')
+    print(f'\n{"="*55}')
+    print(f'Dataset saved → {output_path}')
+    print(f'  Files processed : {len(all_dfs)}')
+    print(f'  Total samples   : {total_frames}')
+    print(f'  Columns         : {len(OUTPUT_COLS)}')
+    print(f'{"="*55}')
 
 
 if __name__ == '__main__':

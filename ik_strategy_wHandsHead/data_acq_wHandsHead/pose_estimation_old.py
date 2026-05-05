@@ -3,8 +3,8 @@ pose_estimation.py
 =============================================================================
 Main entry point for the landmark extraction pipeline.
 
-Loads a video file, runs MediaPipe Pose on each frame and saves the
-detected pose landmarks to CSV via save_landmarks.py.
+Loads a video file, runs MediaPipe Holistic on each frame and saves the
+detected landmarks to CSV via save_landmarks.py.
 
 Controls:
   P : pause / resume
@@ -17,44 +17,76 @@ Input:
 
 Output:
   data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/right_hand.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/left_hand.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/face.csv
 '''
 
 import cv2
 import mediapipe as mp
 
-from config import DATA_ROOT
-from save_landmarks import init_csv_files, save_frame
+from config import DATA_ROOT, FACE_INDICES
+from save_landmarks_old import init_csv_files, save_frame
 from ask_inputs import ask_inputs
 
-# Setup MediaPipe Pose
-mp_pose    = mp.solutions.pose
+# Setup MediaPipe Holistic
+mp_holistic = mp.solutions.holistic
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
 # Display window width in pixels
 DISPLAY_WIDTH = 500
 
-# Hide face landmarks (indices 0-10) from the overlay — not used in pipeline
-_POSE_FACE_INDICES  = set(range(11))
-_HIDDEN_SPEC        = mp_drawing.DrawingSpec(color=(0, 0, 0), thickness=0, circle_radius=0)
-_DEFAULT_POSE_STYLE = mp_drawing_styles.get_default_pose_landmarks_style()
+# Consts
+_POSE_FACE_INDICES     = set(range(11))
+_HIDDEN_SPEC           = mp_drawing.DrawingSpec(color=(0, 0, 0), thickness=0, circle_radius=0)  # Indices 0-10 are face landmarks (nose, eyes, ears, mouth), they are
+                                                                                                # hidden because the Face Mesh already covers them with higher quality.
+_GREY_CONNECTION_SPEC  = mp_drawing.DrawingSpec(color=(150, 150, 150), thickness=1)
+_DEFAULT_POSE_STYLE    = mp_drawing_styles.get_default_pose_landmarks_style()
+_DEFAULT_HAND_LM_STYLE = mp_drawing_styles.get_default_hand_landmarks_style()
+_DEFAULT_HAND_CN_STYLE = mp_drawing_styles.get_default_hand_connections_style()
 
-_BODY_CONNECTIONS   = [c for c in mp_pose.POSE_CONNECTIONS
-                       if c[0] not in _POSE_FACE_INDICES and c[1] not in _POSE_FACE_INDICES]
-_POSE_LANDMARK_SPEC = {idx: (_HIDDEN_SPEC if idx in _POSE_FACE_INDICES
-                              else _DEFAULT_POSE_STYLE.get(idx, mp_drawing.DrawingSpec()))
-                       for idx in range(33)}
+_BODY_CONNECTIONS = [c for c in mp_holistic.POSE_CONNECTIONS if c[0] not in _POSE_FACE_INDICES and c[1] not in _POSE_FACE_INDICES]
+_POSE_LANDMARK_SPEC = {idx: (_HIDDEN_SPEC if idx in _POSE_FACE_INDICES else _DEFAULT_POSE_STYLE.get(idx, mp_drawing.DrawingSpec())) for idx in range(33)}
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 def draw_landmarks(image, results):
-    """Draws body pose landmarks on the frame (face landmarks hidden)."""
+    """
+    Draws pose, hand and face landmarks on the frame.
+
+    Face drawing:
+      - Full Face Mesh tesselation (grey, semi-transparent) for context
+      - 5 pipeline landmarks highlighted in cyan:
+          nose_tip (4), chin (152), forehead (10),
+          left_eye (33), right_eye (263)
+    """
+    # Pose
     if results.pose_landmarks:
-        mp_drawing.draw_landmarks(
-            image, results.pose_landmarks, _BODY_CONNECTIONS,
-            landmark_drawing_spec=_POSE_LANDMARK_SPEC,
-        )
+        mp_drawing.draw_landmarks(image, results.pose_landmarks, _BODY_CONNECTIONS, landmark_drawing_spec=_POSE_LANDMARK_SPEC)
+
+    # Right hand
+    if results.right_hand_landmarks:
+        mp_drawing.draw_landmarks(image, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS, _DEFAULT_HAND_LM_STYLE, _DEFAULT_HAND_CN_STYLE)
+
+    # Left hand
+    if results.left_hand_landmarks:
+        mp_drawing.draw_landmarks(image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS, _DEFAULT_HAND_LM_STYLE, _DEFAULT_HAND_CN_STYLE)
+
+    # Face
+    if results.face_landmarks:
+        # Full tesselation (grey, thin lines, no dots)
+        mp_drawing.draw_landmarks(image, results.face_landmarks, mp_holistic.FACEMESH_TESSELATION, landmark_drawing_spec=None, 
+                                  connection_drawing_spec = _GREY_CONNECTION_SPEC)
+
+        # 5 useful landmarks highlighted in cyan
+        h, w = image.shape[:2]
+        for idx in FACE_INDICES.values():
+            lm = results.face_landmarks.landmark[idx]
+            cx, cy = int(lm.x * w), int(lm.y * h)
+            cv2.circle(image, (cx, cy), 4, (255, 255, 0), -1)   # cyan filled dot
+
     return image
 
 # ---------------------------------------------------------------------------
@@ -85,13 +117,11 @@ def main():
 
     print(f"\nPress 'P' to pause/resume, 'Q' to quit.")
 
-    with mp_pose.Pose(
-        model_complexity=2,             # 0=lite, 1=full, 2=heavy (max precision)
-        smooth_landmarks=True,          # temporal smoothing across frames
-        enable_segmentation=False,
+    with mp_holistic.Holistic(
         min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    ) as pose:
+        min_tracking_confidence=0.5,    # if the tracking goes under this threshold, MediaPipe restarts the complete scanner
+        model_complexity=2              # 0=lite, 1=full, 2=heavy
+    ) as holistic:
 
         while True:
             if not paused:
@@ -104,7 +134,7 @@ def main():
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_rgb.flags.writeable = False       # avoids internal memory copy
 
-                results = pose.process(frame_rgb)   # returns pose landmarks
+                results = holistic.process(frame_rgb)   # returns pose, hands, face
 
                 frame_rgb.flags.writeable = True
                 frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
