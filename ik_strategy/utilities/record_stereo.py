@@ -13,12 +13,12 @@ Controls:
           or stop recording and save (if recording)
 
 Usage:
-  python record_stereo.py
-  >>> Subject number:  1
-  >>> Exercise number: 2
-  >>> Video number:    1
+  python record_stereo.py                                    (prompt interattivo)
+  python record_stereo.py --subject 1 --exercise 2 --video 1 (parte subito)
+  python record_stereo.py --autostart                        (prompt + parte subito)
 '''
 
+import argparse
 import time
 import cv2
 from reachy_sdk import ReachySDK
@@ -37,7 +37,21 @@ DISPLAY_WIDTH = 500              # preview window width
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    subject_name, exercise_name, video_name = ask_inputs()
+    parser = argparse.ArgumentParser(description='Record synchronized stereo video from Reachy.')
+    parser.add_argument('--subject',  type=int, default=None, help='Subject number (e.g. 1)')
+    parser.add_argument('--exercise', type=int, default=None, help='Exercise number (e.g. 2)')
+    parser.add_argument('--video', type=int, default=None, help='video number (e.g. 2)')
+    parser.add_argument('--autostart', action='store_true', help='Start recording immediately without pressing SPACE')
+    args = parser.parse_args()
+
+    if args.subject is not None and args.exercise is not None and args.video is not None:
+        subject_name  = f'subject_{args.subject:03d}'
+        exercise_name = f'exercise_{args.exercise:03d}'
+        video_name    = f'video_{args.video:03d}'
+        autostart     = True   # se tutti gli argomenti sono passati, parte subito
+    else:
+        subject_name, exercise_name, video_name = ask_inputs()
+        autostart = args.autostart
 
     out_dir = DATA_ROOT / "raw_data" / subject_name / exercise_name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -69,7 +83,10 @@ def main():
 
     h, w = frame_L.shape[:2]
     print(f"Camera resolution: {w}x{h}")
-    print("Press SPACE to start recording, Q to quit.\n")
+    if autostart:
+        print("Auto-start: recording begins immediately. Press SPACE or Q to stop.\n")
+    else:
+        print("Press SPACE to start recording, Q to quit.\n")
 
     writer_L = None
     writer_R = None
@@ -84,6 +101,15 @@ def main():
 
     cv2.namedWindow("Reachy - Stereo Recording (left camera)")
     cv2.setMouseCallback("Reachy - Stereo Recording (left camera)", on_mouse)
+
+    # Auto-start: avvia la registrazione prima di entrare nel loop
+    if autostart:
+        fps_guess = 30.0
+        writer_L  = cv2.VideoWriter(str(path_L), FOURCC, fps_guess, (w, h))
+        writer_R  = cv2.VideoWriter(str(path_R), FOURCC, fps_guess, (w, h))
+        frame_times = []
+        recording   = True
+        print("Recording started…")
 
     try:
         while True:

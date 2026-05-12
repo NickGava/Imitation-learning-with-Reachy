@@ -41,7 +41,7 @@ from scipy.signal import medfilt, savgol_filter
 
 from utilities.config import DATA_ROOT, JOINT_COLS, HEAD_COLS
 
-OUTPUT_COLS = ['frame', 'timestamp'] + JOINT_COLS + HEAD_COLS
+OUTPUT_COLS = ['frame', 'timestamp'] + JOINT_COLS 
 
 # ShapeDBA parameter
 DEFAULT_MAX_ITER = 30
@@ -280,11 +280,11 @@ def _process_exercise(
     landmarks_root: Path,
     dataset_root: Path,
     filter_subject: Optional[int],
-    max_iter: int,
-    amplitude_rescale: bool,
-    amplitude_percentile: float,
-    smooth: bool,
-    smooth_window: int,
+    smooth: bool = True,
+    smooth_window: int = 11,
+    amplitude_percentile: float = 80.0,
+    amplitude_rescale: bool = True,
+    max_iter: int = DEFAULT_MAX_ITER,
     reach: int = DEFAULT_REACH,
 ) -> None:
     '''

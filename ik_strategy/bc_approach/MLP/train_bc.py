@@ -4,17 +4,17 @@ MLP/train_bc.py
 Trains the Behavioral Cloning MLP for a single exercise using k-fold
 cross validation. Produces K independent models, one per fold.
 
-Architecture : 16 -> [256, ReLU] -> [256, ReLU] -> 8
-Input        : [q(t), dq(t)]  — current position + velocity (16 values)
-Output       : Δq(t)          — joint delta (8 values)
+Architecture : 32 -> [256, ReLU] -> [256, ReLU] -> 16
+Input        : [q(t), dq(t)]  — current position + velocity (32 values)
+Output       : Δq(t)          — joint delta (16 values)
 Loss         : MSE
 Optimizer    : Adam (lr=1e-3)
 Early stopping: patience=20 on validation loss
 Noise aug.   : Gaussian noise on state input during training (std=0.1)
 
-K-fold: videos are divided into K folds. Each fold trains a separate model
-with a different validation set. At inference, all K models are ensembled
-by averaging their predicted deltas (see test_bc.py).
+K-fold: videos are divided into K folds using a composite subject_video key
+to correctly identify unique videos across multiple subjects.
+K is computed as ceil(N_videos * K_FOLDS_RATIO).
 
 --- Input ---
   data/dataset/exercise_XXX/bc_dataset.csv
@@ -29,6 +29,7 @@ Usage:
 '''
 
 import argparse
+import math
 import pickle
 import numpy as np
 import pandas as pd
@@ -42,36 +43,31 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 
-from utilities.config import DATA_ROOT
+from utilities.config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
-]
 STATE_COLS  = [f'q_{j}'   for j in JOINT_COLS]
 VEL_COLS    = [f'dq_{j}'  for j in JOINT_COLS]
 ACTION_COLS = [f'act_{j}' for j in JOINT_COLS]
-INPUT_COLS  = STATE_COLS + VEL_COLS  # 16 values
-OUTPUT_COLS = ACTION_COLS            # 8 values
+INPUT_COLS  = STATE_COLS + VEL_COLS
+OUTPUT_COLS = ACTION_COLS
 
-K_FOLDS_RATIO = 0.25  # fraction of videos used for each validation fold
-HIDDEN_SIZE = 256
-BATCH_SIZE  = 64
-LR          = 1e-3
-PATIENCE    = 20
-MAX_EPOCHS  = 500
-RANDOM_SEED = 42
-NOISE_STD   = 0.1
+K_FOLDS_RATIO = 0.25
+HIDDEN_SIZE   = 256
+BATCH_SIZE    = 64
+LR            = 1e-3
+PATIENCE      = 20
+MAX_EPOCHS    = 500
+RANDOM_SEED   = 42
+NOISE_STD     = 0.1
 
 
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 class BCPolicyMLP(nn.Module):
-    """MLP policy: [q, dq] (16) -> Δq (8)."""
     def __init__(self, input_size: int, hidden_size: int, output_size: int):
         super().__init__()
         self.net = nn.Sequential(
@@ -88,8 +84,6 @@ class BCPolicyMLP(nn.Module):
 # Single fold training
 # ---------------------------------------------------------------------------
 def _train_fold(X_trn, y_trn, X_val, y_val, device, fold_idx, output_dir):
-    """Trains one fold and saves model + scaler. Returns best val loss."""
-
     scaler  = StandardScaler()
     X_trn_n = scaler.fit_transform(X_trn)
     X_val_n = scaler.transform(X_val)
@@ -151,6 +145,12 @@ def _train_fold(X_trn, y_trn, X_val, y_val, device, fold_idx, output_dir):
                 'hidden_size': HIDDEN_SIZE,
                 'n_layers':    2,
                 'val_loss':    val_loss,
+                'hparams': {
+                    'hidden_size': HIDDEN_SIZE,
+                    'lr':          LR,
+                    'batch_size':  BATCH_SIZE,
+                    'noise_std':   NOISE_STD,
+                }
             }, model_path)
         else:
             patience_count += 1
@@ -208,13 +208,16 @@ def main():
     df = pd.read_csv(dataset_path)
     print(f'  {len(df)} samples\n')
 
+    # Composite key: uniquely identifies each video across all subjects
+    df['video_id'] = df['subject'].astype(str) + '_' + df['video'].astype(str)
+
     X = df[INPUT_COLS].values.astype(np.float32)
     y = df[OUTPUT_COLS].values.astype(np.float32)
 
     np.random.seed(RANDOM_SEED)
-    video_ids = df['video'].unique()
+    video_ids = df['video_id'].unique()
     np.random.shuffle(video_ids)
-    K_FOLDS = max(2, round(len(video_ids) * K_FOLDS_RATIO))
+    K_FOLDS = max(2, math.ceil(len(video_ids) * K_FOLDS_RATIO))
     folds   = np.array_split(video_ids, K_FOLDS)
 
     print(f'K-fold cross validation  (K={K_FOLDS}, ratio={K_FOLDS_RATIO})')
@@ -232,11 +235,11 @@ def main():
     all_train_curves, all_val_curves = [], []
 
     for fold_idx in range(K_FOLDS):
-        val_videos = set(folds[fold_idx].tolist())
-        trn_videos = set(video_ids.tolist()) - val_videos
+        val_ids = set(folds[fold_idx].tolist())
+        trn_ids = set(video_ids.tolist()) - val_ids
 
-        trn_mask = df['video'].isin(trn_videos).values
-        val_mask = df['video'].isin(val_videos).values
+        trn_mask = df['video_id'].isin(trn_ids).values
+        val_mask = df['video_id'].isin(val_ids).values
         X_trn, y_trn = X[trn_mask], y[trn_mask]
         X_val, y_val = X[val_mask], y[val_mask]
 

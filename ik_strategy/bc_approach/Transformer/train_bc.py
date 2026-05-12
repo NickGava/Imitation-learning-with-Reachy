@@ -9,15 +9,12 @@ Architecture:
   - TransformerEncoder (N_HEADS attention heads, N_LAYERS layers)
   - Linear head on last timestep → Δq
 
-Input  : sequence of [q, dq] values, shape (SEQ_LEN, 16)
-Output : Δq(t) — joint delta (8 values)
+Input  : sequence of [q, dq] values, shape (SEQ_LEN, 32)
+Output : Δq(t) — joint delta (16 values)
 
-The Transformer processes all timesteps in parallel via self-attention,
-weighting each past state dynamically based on learned relevance.
-A causal mask ensures the model only attends to past timesteps.
-
-K-fold: same video-level split as MLP and GRU.
-Ensemble: all K models are averaged at inference (see test_bc.py).
+K-fold: videos are divided into K folds using a composite subject_video key
+to correctly identify unique videos across multiple subjects.
+K is computed as ceil(N_videos * K_FOLDS_RATIO).
 
 --- Input ---
   data/dataset/exercise_XXX/bc_dataset.csv
@@ -46,32 +43,25 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 
-from utilities.config import DATA_ROOT
+from utilities.config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
-]
 N_JOINTS    = len(JOINT_COLS)
 STATE_COLS  = [f'q_{j}'  for j in JOINT_COLS]
 VEL_COLS    = [f'dq_{j}' for j in JOINT_COLS]
 ACTION_COLS = [f'act_{j}' for j in JOINT_COLS]
 
-# Each timestep contains [q, dq] → 16 features
-N_INPUT       = N_JOINTS * 2  # 16
+N_INPUT       = N_JOINTS * 2  # [q, dq] per timestep
 
 SEQ_LEN       = 20
 K_FOLDS_RATIO = 0.25
 
-# Transformer hyperparameters
-# D_MODEL must be divisible by N_HEADS
-D_MODEL   = 64    # embedding dimension
-N_HEADS   = 4     # attention heads
-N_LAYERS  = 2     # transformer encoder layers
-D_FF      = 128   # feedforward hidden dim inside each transformer block
+D_MODEL   = 64
+N_HEADS   = 4
+N_LAYERS  = 2
+D_FF      = 128
 DROPOUT   = 0.1
 
 BATCH_SIZE  = 64
@@ -86,10 +76,6 @@ NOISE_STD   = 0.1
 # Positional Encoding
 # ---------------------------------------------------------------------------
 class PositionalEncoding(nn.Module):
-    """
-    Sinusoidal positional encoding — adds position information to the
-    input embeddings so the Transformer knows the order of timesteps.
-    """
     def __init__(self, d_model: int, max_len: int = 100, dropout: float = 0.1):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
@@ -100,11 +86,9 @@ class PositionalEncoding(nn.Module):
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-        self.register_buffer('pe', pe)
+        self.register_buffer('pe', pe.unsqueeze(0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (batch, seq_len, d_model)
         x = x + self.pe[:, :x.size(1)]
         return self.dropout(x)
 
@@ -113,13 +97,6 @@ class PositionalEncoding(nn.Module):
 # Model
 # ---------------------------------------------------------------------------
 class BCPolicyTransformer(nn.Module):
-    """
-    Causal Transformer policy: sequence of [q, dq] (SEQ_LEN, 16) -> Δq (8).
-
-    Input is projected to D_MODEL dimensions, positional encoding is added,
-    then processed by a TransformerEncoder with a causal mask.
-    The output at the last timestep is passed to a linear head.
-    """
     def __init__(self, input_dim: int, d_model: int, n_heads: int,
                  n_layers: int, d_ff: int, output_dim: int, dropout: float = 0.1):
         super().__init__()
@@ -133,39 +110,35 @@ class BCPolicyTransformer(nn.Module):
         self.head        = nn.Linear(d_model, output_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (batch, seq_len, input_dim)
-        seq_len = x.size(1)
-
-        # Causal mask: position i can only attend to positions <= i
+        seq_len     = x.size(1)
         causal_mask = nn.Transformer.generate_square_subsequent_mask(
-            seq_len, device=x.device
-        )
-        x = self.input_proj(x)          # (batch, seq_len, d_model)
-        x = self.pos_enc(x)             # add positional encoding
+            seq_len, device=x.device)
+        x = self.input_proj(x)
+        x = self.pos_enc(x)
         x = self.transformer(x, mask=causal_mask, is_causal=True)
-        return self.head(x[:, -1, :])   # last timestep → (batch, output_dim)
+        return self.head(x[:, -1, :])
 
 
 # ---------------------------------------------------------------------------
-# Dataset builder (same as GRU)
+# Dataset builder
 # ---------------------------------------------------------------------------
 def build_sequences(df: pd.DataFrame, seq_len: int):
     """
     Creates sliding-window sequences from bc_dataset.csv.
-    Windows never cross video boundaries.
-    Each timestep contains [q, dq] — 16 features.
+    Windows never cross video boundaries (identified by video_id composite key).
+    Each timestep contains [q, dq].
     """
     X_list, y_list = [], []
     skipped = 0
 
-    for video_id in sorted(df['video'].unique()):
-        vdf = df[df['video'] == video_id].reset_index(drop=True)
+    for vid in sorted(df['video_id'].unique()):
+        vdf = df[df['video_id'] == vid].reset_index(drop=True)
         if len(vdf) < seq_len:
             skipped += 1
             continue
         q  = vdf[STATE_COLS].values.astype(np.float32)
         dq = vdf[VEL_COLS].values.astype(np.float32)
-        qv = np.concatenate([q, dq], axis=1)             # (N, 16)
+        qv = np.concatenate([q, dq], axis=1)
         a  = vdf[ACTION_COLS].values.astype(np.float32)
         for i in range(seq_len - 1, len(vdf)):
             X_list.append(qv[i - seq_len + 1 : i + 1])
@@ -181,8 +154,6 @@ def build_sequences(df: pd.DataFrame, seq_len: int):
 # Single fold training
 # ---------------------------------------------------------------------------
 def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
-    """Trains one fold and saves model + scaler. Returns best val loss."""
-
     X_trn, y_trn = build_sequences(df_trn, SEQ_LEN)
     X_val, y_val = build_sequences(df_val, SEQ_LEN)
 
@@ -190,7 +161,6 @@ def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
         print(f'  [SKIP] Not enough sequences for fold {fold_idx}.')
         return float('inf'), [], []
 
-    # Normalise
     scaler     = StandardScaler()
     X_trn_flat = X_trn.reshape(-1, N_INPUT)
     scaler.fit(X_trn_flat)
@@ -262,6 +232,17 @@ def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
                 'dropout':     DROPOUT,
                 'seq_len':     SEQ_LEN,
                 'val_loss':    val_loss,
+                'hparams': {
+                    'd_model':    D_MODEL,
+                    'n_heads':    N_HEADS,
+                    'n_layers':   N_LAYERS,
+                    'd_ff':       D_FF,
+                    'dropout':    DROPOUT,
+                    'seq_len':    SEQ_LEN,
+                    'lr':         LR,
+                    'batch_size': BATCH_SIZE,
+                    'noise_std':  NOISE_STD,
+                },
             }, model_path)
         else:
             patience_count += 1
@@ -319,10 +300,13 @@ def main():
     df = pd.read_csv(dataset_path)
     print(f'  {len(df)} samples across {df["video"].nunique()} video(s)\n')
 
+    # Composite key: uniquely identifies each video across all subjects
+    df['video_id'] = df['subject'].astype(str) + '_' + df['video'].astype(str)
+
     np.random.seed(RANDOM_SEED)
-    video_ids = df['video'].unique()
+    video_ids = df['video_id'].unique()
     np.random.shuffle(video_ids)
-    K_FOLDS = max(2, round(len(video_ids) * K_FOLDS_RATIO))
+    K_FOLDS = max(2, math.ceil(len(video_ids) * K_FOLDS_RATIO))
     folds   = np.array_split(video_ids, K_FOLDS)
 
     print(f'K-fold cross validation  (K={K_FOLDS}, ratio={K_FOLDS_RATIO})')
@@ -341,14 +325,14 @@ def main():
     all_train_curves, all_val_curves = [], []
 
     for fold_idx in range(K_FOLDS):
-        val_videos = set(folds[fold_idx].tolist())
-        trn_videos = set(video_ids.tolist()) - val_videos
+        val_ids = set(folds[fold_idx].tolist())
+        trn_ids = set(video_ids.tolist()) - val_ids
 
-        df_trn = df[df['video'].isin(trn_videos)]
-        df_val = df[df['video'].isin(val_videos)]
+        df_trn = df[df['video_id'].isin(trn_ids)]
+        df_val = df[df['video_id'].isin(val_ids)]
 
         print(f'{"="*50}')
-        print(f'Fold {fold_idx}  |  train: {sorted(trn_videos)}  val: {sorted(val_videos)}')
+        print(f'Fold {fold_idx}  |  train: {sorted(trn_ids)}  val: {sorted(val_ids)}')
         print(f'{"="*50}')
         print(f"{'Epoch':>6}  {'Train loss':>12}  {'Val loss':>12}")
         print('-' * 36)

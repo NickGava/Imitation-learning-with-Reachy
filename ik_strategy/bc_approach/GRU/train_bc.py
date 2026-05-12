@@ -4,17 +4,17 @@ GRU/train_bc.py
 Trains the Behavioral Cloning GRU for a single exercise using k-fold
 cross validation. Produces K independent models, one per fold.
 
-Architecture : GRU(input=8, hidden=256) -> Linear(256 -> 8)
-Input        : sequence of q values, shape (SEQ_LEN, 8)
-Output       : Δq(t)  — joint delta (8 values)
+Architecture : GRU(input=32, hidden=256) -> Linear(256 -> 16)
+Input        : sequence of [q, dq] values, shape (SEQ_LEN, 32)
+Output       : Δq(t)  — joint delta (16 values)
 Loss         : MSE
 Optimizer    : Adam (lr=1e-3)
 Early stopping: patience=20 on validation loss
 Noise aug.   : Gaussian noise on input sequences during training (std=0.1)
 
-K-fold: videos are divided into K folds. Each fold trains a separate model
-with a different validation set. At inference, all K models are ensembled
-by averaging their predicted deltas (see test_bc.py).
+K-fold: videos are divided into K folds using a composite subject_video key
+to correctly identify unique videos across multiple subjects.
+K is computed as ceil(N_videos * K_FOLDS_RATIO).
 
 --- Input ---
   data/dataset/exercise_XXX/bc_dataset.csv
@@ -29,6 +29,7 @@ Usage:
 '''
 
 import argparse
+import math
 import pickle
 import numpy as np
 import pandas as pd
@@ -42,40 +43,34 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 
-from utilities.config import DATA_ROOT
+from utilities.config import DATA_ROOT, JOINT_COLS
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-JOINT_COLS = [
-    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
-    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
-]
 N_JOINTS    = len(JOINT_COLS)
 STATE_COLS  = [f'q_{j}'   for j in JOINT_COLS]
 VEL_COLS    = [f'dq_{j}'  for j in JOINT_COLS]
 ACTION_COLS = [f'act_{j}' for j in JOINT_COLS]
 
-# Each timestep in the sequence contains [q, dq] → 16 features
-N_INPUT     = N_JOINTS * 2  # 16
+N_INPUT       = N_JOINTS * 2  # [q, dq] per timestep
 
-SEQ_LEN     = 20
-K_FOLDS_RATIO = 0.25  # fraction of videos used for each validation fold
-HIDDEN_SIZE = 256
-N_LAYERS    = 1
-BATCH_SIZE  = 64
-LR          = 1e-3
-PATIENCE    = 20
-MAX_EPOCHS  = 500
-RANDOM_SEED = 42
-NOISE_STD   = 0.1
+SEQ_LEN       = 20
+K_FOLDS_RATIO = 0.25
+HIDDEN_SIZE   = 256
+N_LAYERS      = 1
+BATCH_SIZE    = 64
+LR            = 1e-3
+PATIENCE      = 20
+MAX_EPOCHS    = 500
+RANDOM_SEED   = 42
+NOISE_STD     = 0.1
 
 
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 class BCPolicyGRU(nn.Module):
-    """GRU policy: sequence of [q, dq] values (SEQ_LEN, 16) -> Δq (8)."""
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, n_layers: int = 1):
         super().__init__()
         self.gru  = nn.GRU(input_dim, hidden_dim, n_layers, batch_first=True)
@@ -92,24 +87,24 @@ class BCPolicyGRU(nn.Module):
 def build_sequences(df: pd.DataFrame, seq_len: int):
     """
     Creates sliding-window sequences from bc_dataset.csv.
-    Windows never cross video boundaries.
-    Each timestep contains [q, dq] — position and velocity (16 features).
+    Windows never cross video boundaries (identified by video_id composite key).
+    Each timestep contains [q, dq].
     """
     X_list, y_list = [], []
     skipped = 0
 
-    for video_id in sorted(df['video'].unique()):
-        vdf = df[df['video'] == video_id].reset_index(drop=True)
+    for vid in sorted(df['video_id'].unique()):
+        vdf = df[df['video_id'] == vid].reset_index(drop=True)
         if len(vdf) < seq_len:
             skipped += 1
             continue
-        q  = vdf[STATE_COLS].values.astype(np.float32)   # (N, 8)
-        dq = vdf[VEL_COLS].values.astype(np.float32)     # (N, 8)
-        qv = np.concatenate([q, dq], axis=1)             # (N, 16)
-        a  = vdf[ACTION_COLS].values.astype(np.float32)  # (N, 8)
+        q  = vdf[STATE_COLS].values.astype(np.float32)
+        dq = vdf[VEL_COLS].values.astype(np.float32)
+        qv = np.concatenate([q, dq], axis=1)
+        a  = vdf[ACTION_COLS].values.astype(np.float32)
         for i in range(seq_len - 1, len(vdf)):
-            X_list.append(qv[i - seq_len + 1 : i + 1])  # (seq_len, 16)
-            y_list.append(a[i])                           # (8,)
+            X_list.append(qv[i - seq_len + 1 : i + 1])
+            y_list.append(a[i])
 
     if skipped:
         print(f'  [WARN] {skipped} video(s) skipped (fewer than {seq_len} frames)')
@@ -121,8 +116,6 @@ def build_sequences(df: pd.DataFrame, seq_len: int):
 # Single fold training
 # ---------------------------------------------------------------------------
 def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
-    """Trains one fold and saves model + scaler. Returns best val loss."""
-
     X_trn, y_trn = build_sequences(df_trn, SEQ_LEN)
     X_val, y_val = build_sequences(df_val, SEQ_LEN)
 
@@ -130,7 +123,6 @@ def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
         print(f'  [SKIP] Not enough sequences for fold {fold_idx}.')
         return float('inf'), [], []
 
-    # Normalise
     scaler     = StandardScaler()
     X_trn_flat = X_trn.reshape(-1, N_INPUT)
     scaler.fit(X_trn_flat)
@@ -195,6 +187,14 @@ def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
                 'n_layers':    N_LAYERS,
                 'seq_len':     SEQ_LEN,
                 'val_loss':    val_loss,
+                'hparams': {
+                    'hidden_size': HIDDEN_SIZE,
+                    'n_layers':    N_LAYERS,
+                    'seq_len':     SEQ_LEN,
+                    'lr':          LR,
+                    'batch_size':  BATCH_SIZE,
+                    'noise_std':   NOISE_STD,
+                },
             }, model_path)
         else:
             patience_count += 1
@@ -252,10 +252,13 @@ def main():
     df = pd.read_csv(dataset_path)
     print(f'  {len(df)} samples across {df["video"].nunique()} video(s)\n')
 
+    # Composite key: uniquely identifies each video across all subjects
+    df['video_id'] = df['subject'].astype(str) + '_' + df['video'].astype(str)
+
     np.random.seed(RANDOM_SEED)
-    video_ids = df['video'].unique()
+    video_ids = df['video_id'].unique()
     np.random.shuffle(video_ids)
-    K_FOLDS = max(2, round(len(video_ids) * K_FOLDS_RATIO))
+    K_FOLDS = max(2, math.ceil(len(video_ids) * K_FOLDS_RATIO))
     folds   = np.array_split(video_ids, K_FOLDS)
 
     print(f'K-fold cross validation  (K={K_FOLDS}, ratio={K_FOLDS_RATIO})')
@@ -273,14 +276,14 @@ def main():
     all_train_curves, all_val_curves = [], []
 
     for fold_idx in range(K_FOLDS):
-        val_videos = set(folds[fold_idx].tolist())
-        trn_videos = set(video_ids.tolist()) - val_videos
+        val_ids = set(folds[fold_idx].tolist())
+        trn_ids = set(video_ids.tolist()) - val_ids
 
-        df_trn = df[df['video'].isin(trn_videos)]
-        df_val = df[df['video'].isin(val_videos)]
+        df_trn = df[df['video_id'].isin(trn_ids)]
+        df_val = df[df['video_id'].isin(val_ids)]
 
         print(f'{"="*50}')
-        print(f'Fold {fold_idx}  |  train videos: {sorted(trn_videos)}  val videos: {sorted(val_videos)}')
+        print(f'Fold {fold_idx}  |  train: {sorted(trn_ids)}  val: {sorted(val_ids)}')
         print(f'{"="*50}')
         print(f"{'Epoch':>6}  {'Train loss':>12}  {'Val loss':>12}")
         print('-' * 36)

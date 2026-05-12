@@ -37,7 +37,7 @@ from reachy_sdk.trajectory import goto
 from reachy_sdk.trajectory.interpolation import InterpolationMode
 
 from data_acquisition.run_ik import fk
-from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, REST_POSE, GRIPPER_RANGE, STARTING_POSE
+from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, GRIPPER_RANGE, STARTING_POSE
 from create_baselines.exercises import EXERCISES
 
 # ---------------------------------------------------------------------------
@@ -145,9 +145,11 @@ def _check_limits(trajectory: np.ndarray) -> bool:
 # ---------------------------------------------------------------------------
 # FK verification plot
 # ---------------------------------------------------------------------------
-def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
+def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int, output_dir: Path) -> None:
     '''
     Computes FK for every frame and plots wrist and elbow trajectories in 3D (torso frame) for both arms.
+    All Y axes share the same scale. X-axis label is shown on every subplot.
+    Saves the figure to output_dir/plots/baseline.png automatically.
     '''
     r_wrist, r_elbow = [], []
     l_wrist, l_elbow = [], []
@@ -155,13 +157,13 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
     for q_deg in trajectory:
         # Right arm: joints 0-6 (shoulder_pitch to wrist_roll)
         q_r = np.deg2rad(q_deg[:7])
-        e_r, w_r, _ = fk(q_r, 'right')
+        e_r, w_r = fk(q_r, 'right')
         r_elbow.append(e_r)
         r_wrist.append(w_r)
 
         # Left arm: joints 8-14
         q_l = np.deg2rad(q_deg[8:15])
-        e_l, w_l, _ = fk(q_l, 'left')
+        e_l, w_l = fk(q_l, 'left')
         l_elbow.append(e_l)
         l_wrist.append(w_l)
 
@@ -172,7 +174,13 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
 
     frames = np.arange(len(trajectory))
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 9), sharex=True)
+    # Global Y range across all FK data so every subplot uses the same scale
+    all_vals = np.concatenate([r_wrist, r_elbow, l_wrist, l_elbow], axis=0)
+    y_min, y_max = all_vals.min(), all_vals.max()
+    y_pad = (y_max - y_min) * 0.05 or 0.05   # 5 % padding, at least 5 cm
+    y_lim = (y_min - y_pad, y_max + y_pad)
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 9), sharex=False)
     fig.suptitle(f'FK Verification - Exercise {exercise_num:03d}\n'
                  f'(Reachy torso frame: X=forward, Y=left, Z=up)', fontsize=11, fontweight='bold')
 
@@ -184,6 +192,8 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
         ax.plot(frames, r_wrist[:, dim],  label='wrist',  color='#3498db', linewidth=1.5)
         ax.plot(frames, r_elbow[:, dim],  label='elbow',  color='#e67e22', linewidth=1.5, linestyle='--')
         ax.set_ylabel(labels[dim], fontsize=9)
+        ax.set_xlabel('Frame', fontsize=9)
+        ax.set_ylim(*y_lim)
         if dim == 0:
             ax.set_title('Right arm', fontsize=10, fontweight='bold')
         ax.legend(fontsize=8)
@@ -195,6 +205,8 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
         ax = axes[dim, 1]
         ax.plot(frames, l_wrist[:, dim],  label='wrist',  color='#3498db', linewidth=1.5)
         ax.plot(frames, l_elbow[:, dim],  label='elbow',  color='#e67e22', linewidth=1.5, linestyle='--')
+        ax.set_xlabel('Frame', fontsize=9)
+        ax.set_ylim(*y_lim)
         if dim == 0:
             ax.set_title('Left arm', fontsize=10, fontweight='bold')
         ax.legend(fontsize=8)
@@ -202,11 +214,108 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int) -> None:
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-    for ax in axes[2]:
-        ax.set_xlabel('Frame', fontsize=9)
-
     fig.tight_layout()
-    plt.show()
+
+    # Auto-save PNG
+    plots_dir = output_dir / 'plots'
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    png_path  = plots_dir / 'baseline.png'
+    fig.savefig(png_path, dpi=150, bbox_inches='tight')
+    print(f'Plot saved  -> {png_path}')
+
+    # plt.show()
+
+
+# ---------------------------------------------------------------------------
+# Joint angles plot for canonical trajectory
+# ---------------------------------------------------------------------------
+RIGHT_JOINTS = [
+    ('r_shoulder_pitch', 0, 'right'),
+    ('r_shoulder_roll',  1, 'right'),
+    ('r_arm_yaw',        2, 'right'),
+    ('r_elbow_pitch',    3, 'right'),
+]
+LEFT_JOINTS = [
+    ('l_shoulder_pitch', 0, 'left'),
+    ('l_shoulder_roll',  1, 'left'),
+    ('l_arm_yaw',        2, 'left'),
+    ('l_elbow_pitch',    3, 'left'),
+]
+JOINT_LABELS = {
+    'r_shoulder_pitch': 'Shoulder Pitch', 'r_shoulder_roll': 'Shoulder Roll',
+    'r_arm_yaw':        'Arm Yaw',        'r_elbow_pitch':   'Elbow Pitch',
+    'l_shoulder_pitch': 'Shoulder Pitch', 'l_shoulder_roll': 'Shoulder Roll',
+    'l_arm_yaw':        'Arm Yaw',        'l_elbow_pitch':   'Elbow Pitch',
+}
+LINE_COLOR_CANONICAL = '#2ca02c'
+Y_PADDING = 5.0
+
+import matplotlib.ticker as ticker
+
+def _plot_joints_baseline(trajectory: np.ndarray, output_dir: Path, exercise_num: int) -> None:
+    '''
+    Plots joint angles of the baseline trajectory using the same layout as
+    plot_joints.py. Saves to output_dir/plots_joints/joints_baseline.png.
+    '''
+    df     = pd.DataFrame(trajectory, columns=JOINT_COLS)
+    frames = np.arange(len(df))
+
+    n_rows = max(len(RIGHT_JOINTS), len(LEFT_JOINTS))
+    fig, axes = plt.subplots(
+        nrows=n_rows, ncols=2,
+        figsize=(14, 2.8 * n_rows),
+        sharex=False,
+    )
+    if n_rows == 1:
+        axes = np.array([axes])
+
+    fig.suptitle(
+        f'Joint angles (baseline) — exercise_{exercise_num:03d}\n'
+        f'(Y scale = robot joint limits)',
+        fontsize=13, fontweight='bold', y=1.01,
+    )
+    axes[0, 0].set_title('Right arm', fontsize=12, fontweight='bold', pad=8)
+    axes[0, 1].set_title('Left arm',  fontsize=12, fontweight='bold', pad=8)
+
+    for row_idx in range(n_rows):
+        ax_r = axes[row_idx, 0]
+        if row_idx < len(RIGHT_JOINTS):
+            col, lim_idx, side = RIGHT_JOINTS[row_idx]
+            if col in df.columns:
+                ax_r.plot(frames, df[col].values, color=LINE_COLOR_CANONICAL, linewidth=1.5)
+            ax_r.set_ylabel(f'{JOINT_LABELS.get(col, col)}\n(deg)', fontsize=9)
+            y_min, y_max = JOINT_LIMITS_DEG[side][lim_idx]
+            ax_r.set_ylim(y_min - Y_PADDING, y_max + Y_PADDING)
+        else:
+            ax_r.set_visible(False)
+
+        ax_l = axes[row_idx, 1]
+        if row_idx < len(LEFT_JOINTS):
+            col, lim_idx, side = LEFT_JOINTS[row_idx]
+            if col in df.columns:
+                ax_l.plot(frames, df[col].values, color=LINE_COLOR_CANONICAL, linewidth=1.5)
+            y_min, y_max = JOINT_LIMITS_DEG[side][lim_idx]
+            ax_l.set_ylim(y_min - Y_PADDING, y_max + Y_PADDING)
+        else:
+            ax_l.set_visible(False)
+
+        for ax in (ax_r, ax_l):
+            if ax.get_visible():
+                ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
+                ax.yaxis.set_minor_locator(ticker.MultipleLocator(10))
+                ax.grid(True, which='major', linestyle='--', linewidth=0.6, alpha=0.7)
+                ax.grid(True, which='minor', linestyle=':',  linewidth=0.4, alpha=0.4)
+                ax.tick_params(axis='both', labelsize=8)
+                if row_idx == n_rows - 1:
+                    ax.set_xlabel('Frame', fontsize=9)
+
+    plots_dir = output_dir / 'plots_joints'
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    output_path = plots_dir / 'joints_baseline.png'
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Plot saved  -> {output_path}')
 
 
 # ---------------------------------------------------------------------------
@@ -267,16 +376,16 @@ def main():
 
     # --- FK verification plot ---
     print('\nPlotting FK verification ...')
-    _plot_fk_verification(trajectory, args.exercise)
+    _plot_fk_verification(trajectory, args.exercise, output_dir)
 
     # --- Save ---
-    answer = input('\nSave as baseline.csv? [y/N] ').strip().lower()
-    if answer == 'y':
-        path = _save_baseline(trajectory, args.fps, args.exercise, output_dir)
-        print(f'\nSaved -> {path}')
-        print(f'Frames: {len(trajectory)}  Duration: {duration:.2f}s')
-    else:
-        print('Not saved.')
+    path = _save_baseline(trajectory, args.fps, args.exercise, output_dir)
+    print(f'\nSaved -> {path}')
+    print(f'Frames: {len(trajectory)}  Duration: {duration:.2f}s')
+
+    # --- Joint angles plot for baseline ---
+    print('\nPlotting baseline joint angles ...')
+    _plot_joints_baseline(trajectory, output_dir, args.exercise)
 
     print('\nDone.')
 

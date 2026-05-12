@@ -47,7 +47,7 @@ def _build_rectification_map(img_size):
     R1, R2, P_L, P_R, Q, _, _ = cv2.stereoRectify(
         LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, img_size,
         R, T, flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=1
+        alpha=0.4
     )
     map_L1, map_L2 = cv2.initUndistortRectifyMap(LEFT_K, LEFT_D, R1, P_L, img_size, cv2.CV_32FC1)
     map_R1, map_R2 = cv2.initUndistortRectifyMap(RIGHT_K, RIGHT_D, R2, P_R, img_size, cv2.CV_32FC1)

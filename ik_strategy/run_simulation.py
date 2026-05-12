@@ -1,280 +1,357 @@
 '''
 run_simulation.py
 =============================================================================
-Replays a recorded arm trajectory on the Reachy simulator (Unity via
-ReachySDK) by reading joint_ik.csv and sending motor angles frame by frame.
-The head gaze point (head_x, head_y, head_z) is sent via lookAt() each frame.
+Single entry point to run any trajectory source on the Reachy simulator.
+
+Modes:
+  video       — replays joint_ik.csv from landmarks
+                (requires --subject, --exercise, --video)
+  baseline    — replays baseline.csv from dataset/exercise_XXX/
+                (requires --exercise)
+  canonical   — replays canonical.csv from dataset/exercise_XXX/
+                (requires --exercise)
+  mlp         — BC MLP  ensemble inference → send to robot
+                (requires --exercise)
+  gru         — BC GRU  ensemble inference → send to robot
+                (requires --exercise)
+  transformer — BC Transformer ensemble inference → send to robot
+                (requires --exercise)
+
+If no argument is provided, the script will prompt interactively.
 
 Usage:
-  python run_simulation.py
-  → prompts for subject / exercise / video numbers
-
-Controls:
-  The script plays back the trajectory once at the original recording speed
-  (derived from the timestamp column). A minimum inter-frame delay of
-  MIN_FRAME_DELAY seconds is enforced to avoid saturating the SDK.
-
-Input:
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv
-
-Columns expected in joint_ik.csv:
-  frame, timestamp,
-  r_shoulder_pitch, r_shoulder_roll, r_arm_yaw,
-  r_elbow_pitch,    r_forearm_yaw,
-  r_wrist_pitch,    r_wrist_roll,
-  r_gripper,
-  l_shoulder_pitch, l_shoulder_roll, l_arm_yaw,
-  l_elbow_pitch,    l_forearm_yaw,
-  l_wrist_pitch,    l_wrist_roll,
-  l_gripper,
-  head_x, head_y, head_z
-
-Notes:
-  - The script connects to ReachySDK at host "localhost" (Unity simulator).
-  - Before playback, Reachy moves smoothly to the first frame's pose
-    (arms + head).
-  - At the end of the trajectory, Reachy returns to rest pose and neutral
-    head orientation.
-  - Frames where ALL joint columns for a given arm are NaN are skipped for
-    that arm (the other arm and the head are still updated).
-  - Frames where head_x/y/z are NaN are skipped for lookAt() (head holds
-    its previous position).
-  - Joint angles are sent in degrees, as expected by the Reachy SDK.
-  - Head gaze coordinates are in Reachy's torso frame (X forward, Y lateral
-    right→left, Z up), in meters.
+  py run_simulation.py
+  py run_simulation.py --mode canonical  --exercise 1
+  py run_simulation.py --mode video      --subject 1 --exercise 2 --video 3
+  py run_simulation.py --mode mlp        --exercise 1
+  py run_simulation.py --mode gru        --exercise 1 --runs 3
+  py run_simulation.py --mode transformer --exercise 1 --host 10.59.1.20
+  py run_simulation.py --mode mlp        --exercise 1 --steps 200
 '''
 
+import argparse
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from utilities.config import DATA_ROOT, HEAD_COLS
-import threading
-
-from utilities.ask_inputs import ask_inputs
 
 from reachy_sdk import ReachySDK
-from reachy_sdk.trajectory import goto
-from reachy_sdk.trajectory.interpolation import InterpolationMode
+from reachyController.reachyController import ReachyController
+from reachyController.timeSeries import TimeSeries
+from reachyController import config as rc_config
+
+from utilities.config import DATA_ROOT, JOINT_COLS
+from utilities.ask_inputs import ask_inputs
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-SIMULATOR_HOST  = "localhost"   # IP address of the Reachy simulator (Unity)
+SIMULATOR_HOST  = 'localhost'
+MIN_FRAME_DELAY = 0.033    # ~30 Hz
+GOTO_DURATION   = 2.0      # seconds for smooth init / rest transitions
 
-MIN_FRAME_DELAY = 0.02      # 50 Hz max
+VALID_MODES     = ['video', 'baseline', 'canonical', 'mlp', 'gru', 'transformer']
+BC_MODES        = {'mlp', 'gru', 'transformer'}
+CSV_MODES       = {'video', 'baseline', 'canonical'}
 
-GOTO_REST_DURATION = 2.0
-
-
-# Neutral head gaze: 1 m ahead, at shoulder height (torso frame)
-HEAD_NEUTRAL_GAZE = (1.0, 0.0, 0.15)
-
-REST_ANGLES = {
-    'right': {
-        'r_shoulder_pitch': -20.,
-        'r_shoulder_roll':   0.,
-        'r_arm_yaw':         0.,
-        'r_elbow_pitch':     0.,
-        'r_forearm_yaw':     0.,
-        'r_wrist_pitch':     0.,
-        'r_wrist_roll':      0.,
-        'r_gripper':         0.,
-    },
-    'left': {
-        'l_shoulder_pitch': -20.,
-        'l_shoulder_roll':   0.,
-        'l_arm_yaw':         0.,
-        'l_elbow_pitch':     0.,
-        'l_forearm_yaw':     0.,
-        'l_wrist_pitch':     0.,
-        'l_wrist_roll':      0.,
-        'l_gripper':         0.,
-    },
-}
-
-# JOINT_COLS = {
-#     'right': ['r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw',
-#               'r_elbow_pitch', 'r_forearm_yaw', 'r_wrist_pitch', 'r_wrist_roll', 'r_gripper'],
-#     'left':  ['l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw',
-#               'l_elbow_pitch', 'l_forearm_yaw', 'l_wrist_pitch', 'l_wrist_roll', 'l_gripper'],
-# }
-JOINT_COLS = {
-    'right': ['r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',],
-    'left':  ['l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',],
-}
-
-ARM_OBJ     = {'right': lambda r: r.r_arm, 'left': lambda r: r.l_arm}
-GRIPPER_COL = {'right': 'r_gripper', 'left': 'l_gripper'}
+# All arm joint names expected by ReachyArm (8 per side, 16 total).
+# This matches utilities/config.py JOINT_COLS exactly.
+ALL_ARM_JOINTS = [
+    'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
+    'r_forearm_yaw', 'r_wrist_pitch', 'r_wrist_roll', 'r_gripper',
+    'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
+    'l_forearm_yaw', 'l_wrist_pitch', 'l_wrist_roll', 'l_gripper',
+]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Connection helpers
 # ---------------------------------------------------------------------------
-def _goto_rest(reachy: ReachySDK) -> None:
-    """Moves both arms smoothly to the rest pose and the head to neutral."""
-    goal = {}
-    for side, cols in JOINT_COLS.items():
-        arm = ARM_OBJ[side](reachy)
-        for col in cols:
-            goal[getattr(arm, col)] = REST_ANGLES[side][col]
-
-    goto(goal_positions=goal,
-         duration=GOTO_REST_DURATION,
-         interpolation_mode=InterpolationMode.MINIMUM_JERK)
-    time.sleep(0.5)
-
-    # Return head to neutral after arms have settled
-    x, y, z = HEAD_NEUTRAL_GAZE
-    reachy.head.look_at(x=x, y=y, z=z,
-                        duration=GOTO_REST_DURATION,
-                        interpolation_mode=InterpolationMode.MINIMUM_JERK
-                        )
+def _connect(host: str) -> ReachyController:
+    print(f'Connecting to Reachy at {host} ...')
+    reachy    = ReachySDK(host=host)
+    reachyC   = ReachyController(reachy)
+    reachyC.turnOn()
+    print('Connected and motors on.\n')
+    return reachyC
 
 
-def _goto_first_frame(reachy: ReachySDK, first_row: pd.Series) -> None:
-    """Moves both arms smoothly to the first frame's pose, then head."""
-    goal = {}
-    for side, cols in JOINT_COLS.items():
-        arm = ARM_OBJ[side](reachy)
-        for col in cols:
-            val = first_row.get(col, np.nan)
-            if not pd.isna(val):
-                goal[getattr(arm, col)] = float(val)
-
-    if goal:
-        goto(goal_positions=goal,
-             duration=GOTO_REST_DURATION,
-             interpolation_mode=InterpolationMode.MINIMUM_JERK)
-        time.sleep(0.5)
-
-    # Move head to first frame gaze
-    hx = first_row.get('head_x', np.nan)
-    hy = first_row.get('head_y', np.nan)
-    hz = first_row.get('head_z', np.nan)
-    if not any(pd.isna(v) for v in [hx, hy, hz]):
-        reachy.head.look_at(x=float(hx), y=float(hy), z=float(hz),
-                            duration=GOTO_REST_DURATION,
-                            interpolation_mode=InterpolationMode.MINIMUM_JERK
-                            )
+def _shutdown(reachyC: ReachyController) -> None:
+    print('\nShutting down ...')
+    reachyC.turnOffSmooth()
+    print('Done.')
 
 
-def _arm_columns_valid(row: pd.Series, side: str) -> bool:
-    """Returns True if at least one joint column for this arm is not NaN."""
-    return not all(pd.isna(row[c]) for c in JOINT_COLS[side])
+# ---------------------------------------------------------------------------
+# Motion helpers
+# ---------------------------------------------------------------------------
+def _build_arm_dicts(reachyC: ReachyController, pose: dict) -> tuple:
+    '''
+    Splits a {col: angle} pose dict into two {joint_obj: angle} dicts,
+    one per arm. Missing joints default to 0.0.
+    '''
+    right_dict, left_dict = {}, {}
+    for col, val in pose.items():
+        if col.startswith('r_'):
+            joint = reachyC.armRight._joints.get(col)
+            if joint is not None:
+                right_dict[joint] = float(val)
+        elif col.startswith('l_'):
+            joint = reachyC.armLeft._joints.get(col)
+            if joint is not None:
+                left_dict[joint] = float(val)
+    return right_dict, left_dict
 
 
-import threading
+def _goto_pose(reachyC: ReachyController, pose: dict, duration: float) -> None:
+    '''
+    Moves both arms simultaneously to a given {col: angle} pose.
+    Uses _debug_goto (no collision check) since trajectories are trusted.
+    Blocks until both arms have settled.
+    '''
+    right_dict, left_dict = _build_arm_dicts(reachyC, pose)
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = []
+        if right_dict:
+            futures.append(ex.submit(reachyC.armRight._debug_goto, right_dict, duration))
+        if left_dict:
+            futures.append(ex.submit(reachyC.armLeft._debug_goto, left_dict, duration))
+        for f in futures:
+            f.result()
+    time.sleep(0.2)
 
-def _send_frame(reachy: ReachySDK, row: pd.Series, frame_delay: float) -> None:
-    
-    # --- Arms (instantaneous goal_position, non-blocking) ---
-    def _send_arms():
-        for side, cols in JOINT_COLS.items():
-            if not _arm_columns_valid(row, side):
-                continue
-            arm = ARM_OBJ[side](reachy)
-            for col in cols:
-                val = row[col]
-                if not pd.isna(val):
-                    getattr(arm, col).goal_position = float(val)
-            g_col = GRIPPER_COL[side]
-            if g_col in row and not pd.isna(row[g_col]):
-                getattr(arm, g_col).goal_position = float(row[g_col])
 
-    # --- Head (blocking look_at) ---
-    def _send_head():
-        if all(c in row.index for c in HEAD_COLS):
-            hx, hy, hz = row['head_x'], row['head_y'], row['head_z']
-            if not any(pd.isna(v) for v in [hx, hy, hz]):
-                reachy.head.look_at(
-                    x=float(hx), y=float(hy), z=float(hz),
-                    duration=frame_delay,
-                    interpolation_mode=InterpolationMode.LINEAR
-                )
+def _send_q(reachyC: ReachyController, q: np.ndarray) -> None:
+    '''
+    Non-blocking: writes goal_position for all joints in JOINT_COLS.
+    Used for the BC frame-by-frame loop at 30 Hz.
+    '''
+    for i, col in enumerate(JOINT_COLS):
+        arm   = reachyC.armRight if col.startswith('r_') else reachyC.armLeft
+        joint = arm._joints.get(col)
+        if joint is not None:
+            joint.goal_position = float(q[i])
 
-    t_head = threading.Thread(target=_send_head, daemon=True)
-    t_head.start()
-    _send_arms()          # main thread: non-blocking, ritorna subito
-    # non fare join() — lascia che il thread della testa finisca in background
-    # il time.sleep(frame_delay) nel loop principale fa già da sincronizzatore
+
+# ---------------------------------------------------------------------------
+# CSV → TimeSeries
+# ---------------------------------------------------------------------------
+def _csv_to_timeseries(df: pd.DataFrame) -> TimeSeries:
+    '''
+    Converts a DataFrame with (frame, timestamp, *JOINT_COLS) columns into
+    a TimeSeries that reachyC.playRecord() can consume.
+
+    Joints not present in the CSV are set to 0.0 so that ReachyArm's FK
+    (used by _safeGoto internally) always receives all required joints.
+    '''
+    joint_position = []
+    for _, row in df.iterrows():
+        frame = {col: (float(row[col]) if col in row.index else 0.0)
+                 for col in ALL_ARM_JOINTS}
+        frame['timestamp'] = float(row['timestamp'])
+        joint_position.append(frame)
+
+    timestamps = df['timestamp'].values
+    sf         = 1.0 / float(np.median(np.diff(timestamps)))
+    duration   = float(timestamps[-1] - timestamps[0])
+    return TimeSeries(sf, duration, joint_position)
+
+
+# ---------------------------------------------------------------------------
+# Playback modes (video / baseline / canonical)
+# ---------------------------------------------------------------------------
+def _run_csv(reachyC: ReachyController, csv_path: Path) -> None:
+    '''
+    Loads a CSV trajectory and replays it on the robot via reachyC.playRecord().
+    Both arms are driven simultaneously (ThreadPoolExecutor inside playRecord).
+    '''
+    if not csv_path.exists():
+        print(f'[ERROR] File not found: {csv_path}')
+        return
+
+    df = pd.read_csv(csv_path)
+    print(f'Loaded {len(df)} frames from {csv_path.name}')
+
+    ts = _csv_to_timeseries(df)
+
+    print('Starting playback ...')
+    t_start = time.perf_counter()
+    reachyC.playRecord(ts)
+    elapsed = time.perf_counter() - t_start
+    print(f'Playback complete. Total time: {elapsed:.2f}s')
+
+
+# ---------------------------------------------------------------------------
+# BC inference loop (common for all three architectures)
+# ---------------------------------------------------------------------------
+def _run_bc_loop_on_robot(
+    reachyC  : ReachyController,
+    q_traj   : np.ndarray,
+    start_pose: dict,
+) -> None:
+    '''
+    Sends a pre-computed q_traj (n_steps, N_JOINTS) to the robot at ~30 Hz.
+    Moves to start pose before playback and returns to it afterwards.
+    '''
+    print(f'Moving to start pose ...')
+    _goto_pose(reachyC, start_pose, GOTO_DURATION)
+
+    n_steps = len(q_traj)
+    print(f'Sending {n_steps} frames to robot at ~30 Hz ...')
+    t_start = time.perf_counter()
+    for step in range(n_steps):
+        t_target = t_start + step * MIN_FRAME_DELAY
+        _send_q(reachyC, q_traj[step])
+        sleep_time = t_target + MIN_FRAME_DELAY - time.perf_counter()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+    elapsed = time.perf_counter() - t_start
+    print(f'Loop complete. Total time: {elapsed:.2f}s')
+
+    print('Returning to start pose ...')
+    _goto_pose(reachyC, start_pose, GOTO_DURATION)
+
+
+def _run_bc(
+    reachyC     : ReachyController,
+    arch        : str,           # 'mlp', 'gru', 'transformer'
+    exercise_dir: Path,
+    n_steps,                     # int or None
+    runs        : int,
+) -> None:
+    '''
+    Loads the BC ensemble for the given architecture, runs the autoregressive
+    inference loop (offline), then sends each run to the robot.
+    '''
+    # ---- Import the relevant test_bc module --------------------------------
+    if arch == 'mlp':
+        from bc_approach.MLP.test_bc import load_ensemble, run_bc_loop, _load_start_pose
+    elif arch == 'gru':
+        from bc_approach.GRU.test_bc import load_ensemble, run_bc_loop, _load_start_pose
+    elif arch == 'transformer':
+        from bc_approach.Transformer.test_bc import load_ensemble, run_bc_loop, _load_start_pose
+    else:
+        raise ValueError(f'Unknown BC architecture: {arch}')
+
+    model_dir  = exercise_dir / arch.upper()
+    ensemble   = load_ensemble(model_dir)
+    start_pose = _load_start_pose(exercise_dir)
+
+    # ---- Resolve n_steps ---------------------------------------------------
+    if n_steps is not None:
+        print(f'Steps: {n_steps}  (from --steps)')
+    elif (exercise_dir / 'canonical.csv').exists():
+        n_steps = len(pd.read_csv(exercise_dir / 'canonical.csv'))
+        print(f'Steps: {n_steps}  (from canonical.csv)')
+    elif (exercise_dir / 'baseline.csv').exists():
+        n_steps = len(pd.read_csv(exercise_dir / 'baseline.csv'))
+        print(f'Steps: {n_steps}  (from baseline.csv)')
+    else:
+        n_steps = 300
+        print(f'Steps: {n_steps}  (default)')
+
+    # ---- Run ---------------------------------------------------------------
+    for run in range(1, runs + 1):
+        print(f'\n--- Run {run} / {runs} ---')
+        q_traj = run_bc_loop(ensemble, n_steps, start_pose)   # offline, fast
+        _run_bc_loop_on_robot(reachyC, q_traj, start_pose)
+
+
+# ---------------------------------------------------------------------------
+# Interactive prompts
+# ---------------------------------------------------------------------------
+def _prompt_mode() -> str:
+    print('Select mode:')
+    for i, m in enumerate(VALID_MODES, 1):
+        print(f'  {i}. {m}')
+    raw = input('Mode (name or number): ').strip().lower()
+    # Accept name or 1-based index
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(VALID_MODES):
+            return VALID_MODES[idx]
+    if raw in VALID_MODES:
+        return raw
+    print(f'[ERROR] Invalid mode: "{raw}"')
+    sys.exit(1)
+
+
+def _prompt_exercise() -> int:
+    return int(input('Exercise number: ').strip())
+
+
+def _prompt_subject() -> int:
+    return int(input('Subject number: ').strip())
+
+
+def _prompt_video() -> int:
+    return int(input('Video number: ').strip())
+
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    bl_or_else = input("From dataset or landmarks? (d/l): ").strip().lower()
+    parser = argparse.ArgumentParser(
+        description='Run any trajectory source on the Reachy simulator.')
 
-    if bl_or_else == 'd':
-        exercise_num = int(input("Exercise number: ").strip())
-        exercise_name = f"exercise_{exercise_num:03d}"
-        folder = DATA_ROOT / "dataset" / exercise_name
-        ik_path = folder / "canonical.csv"
-    else:
-        subject_name, exercise_name, video_name = ask_inputs()
-        folder  = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
-        ik_path = folder / "joint_ik.csv"
-    # ik_path = DATA_ROOT / "dataset" / "exercise_005" / "canonical.csv"
+    parser.add_argument('--mode',     choices=VALID_MODES, default=None,
+                        help='Trajectory source (default: prompted interactively).')
+    parser.add_argument('--exercise', type=int, default=None,
+                        help='Exercise number.')
+    parser.add_argument('--subject',  type=int, default=None,
+                        help='Subject number (video mode only).')
+    parser.add_argument('--video',    type=int, default=None,
+                        help='Video number (video mode only).')
+    parser.add_argument('--host',     type=str, default=SIMULATOR_HOST,
+                        help=f'ReachySDK host (default: {SIMULATOR_HOST}).')
+    parser.add_argument('--runs',     type=int, default=1,
+                        help='Number of BC inference runs sent to the robot (default: 1).')
+    parser.add_argument('--steps',    type=int, default=None,
+                        help='Override number of BC inference steps.')
+    args = parser.parse_args()
 
-    if not ik_path.exists():
-        print(f"Error: {ik_path.name} not found → {ik_path}")
-        return
+    # ---- Resolve mode ------------------------------------------------------
+    mode = args.mode or _prompt_mode()
 
-    df = pd.read_csv(ik_path)
-    n_frames = len(df)
-    print(f"Loaded {n_frames} frames from {ik_path}")
+    # ---- Resolve paths based on mode ---------------------------------------
+    if mode == 'video':
+        subject  = args.subject  or _prompt_subject()
+        exercise = args.exercise or _prompt_exercise()
+        video    = args.video    or _prompt_video()
+        csv_path = (DATA_ROOT / 'landmarks'
+                    / f'subject_{subject:03d}'
+                    / f'exercise_{exercise:03d}'
+                    / f'video_{video:03d}'
+                    / 'joint_ik.csv')
+        exercise_dir = None
 
-    has_head = all(c in df.columns for c in HEAD_COLS)
-    if not has_head:
-        print("[WARNING] head_x/y/z columns not found — head will not move.")
+    elif mode in CSV_MODES:   # baseline or canonical
+        exercise     = args.exercise or _prompt_exercise()
+        exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{exercise:03d}'
+        csv_path     = exercise_dir / f'{mode}.csv'
 
-    # --- Compute per-frame delays from timestamps ---
-    timestamps = df['timestamp'].to_numpy()
-    dt = np.diff(timestamps)
-    dt = np.clip(dt, MIN_FRAME_DELAY, None)
-    dt = np.append(dt, MIN_FRAME_DELAY)
+    else:   # mlp / gru / transformer
+        exercise     = args.exercise or _prompt_exercise()
+        exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{exercise:03d}'
+        csv_path     = None
 
-    # --- Connect to simulator ---
-    print(f"Connecting to Reachy simulator at {SIMULATOR_HOST}…")
-    reachy = ReachySDK(host=SIMULATOR_HOST)
-    print("Connected.\n")
+    # ---- Connect -----------------------------------------------------------
+    reachyC = _connect(args.host)
 
-    # --- Turn on motors ---
-    reachy.turn_on('r_arm')
-    reachy.turn_on('l_arm')
-    reachy.turn_on('head')
+    try:
+        if mode in CSV_MODES or mode == 'video':
+            _run_csv(reachyC, csv_path)
+        else:
+            _run_bc(reachyC, mode, exercise_dir, args.steps, args.runs)
 
-    # --- Move to first frame pose ---
-    print("Moving to first frame pose…")
-    _goto_first_frame(reachy, df.iloc[0])
-    time.sleep(0.2)
-    print("Ready. Starting playback…\n")
-
-    # --- Playback loop ---
-    t_start = time.perf_counter()
-    n_repetitions = 1
-    for i in range(n_repetitions):
-        for i, (_, row) in enumerate(df.iterrows()):
-            _send_frame(reachy, row, float(dt[i]))
-
-            if i % 50 == 0:
-                elapsed = time.perf_counter() - t_start
-                print(f"  Frame {i + 1:4d} / {n_frames}  ({elapsed:.1f}s elapsed)")
-
-            time.sleep(float(dt[i]))
-
-    elapsed_total = time.perf_counter() - t_start
-    print(f"\nPlayback complete. Total time: {elapsed_total:.2f}s")
-
-    # --- Return to rest pose ---
-    print("Returning to rest pose…")
-    _goto_rest(reachy)
-
-    # --- Turn off motors ---
-    reachy.turn_off_smoothly('r_arm')
-    reachy.turn_off_smoothly('l_arm')
-    reachy.turn_off_smoothly('head')
-    print("Done.")
+    finally:
+        _shutdown(reachyC)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

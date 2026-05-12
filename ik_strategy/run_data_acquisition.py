@@ -44,8 +44,8 @@ STEPS = [
     (2, "Data Cleaning",    "data_cleaning"),
     (3, "Mapping",          "mapping"),
     (4, "IK Solver",        "run_ik"),
-    (5, "Plot pose",        "plot_pose"),
-    (6, "Plot joints",       "plot_joints"),
+    (5, "Plot pose",        "utilities.plot_pose"),
+    (6, "Plot joints",      "utilities.plot_joints"),
 ]
 
 RAW_ROOT = DATA_ROOT / "raw_data"
@@ -97,7 +97,12 @@ def _collect_targets(subject_in, exercise_in, video_in) -> list:
             print(f"[SKIP] {subject} not found in raw_data.")
             continue
 
-        exercises = _all_exercises(subject) if exercise_in == 'a' else [exercise_in]
+        if isinstance(exercise_in, list):
+            exercises = exercise_in
+        elif exercise_in == 'a':
+            exercises = _all_exercises(subject)
+        else:
+            exercises = [exercise_in]
 
         for exercise in exercises:
             if not (RAW_ROOT / subject / exercise).exists():
@@ -142,16 +147,22 @@ def _parse_inputs(args) -> tuple:
     subject_out = 'a' if subject_all else f"subject_{int(subject_raw):03d}"
 
     # --- Exercise ---
-    if args.exercise is not None:
+    if args.ex_start is not None:
+        # Range mode: build list of exercise names, video forced to 'a'
+        exercise_out = [f"exercise_{i:03d}"
+                        for i in range(args.ex_start, args.ex_end + 1)]
+        exercise_all = False
+    elif args.exercise is not None:
         exercise_raw = str(args.exercise)
+        exercise_all = (exercise_raw == 'a')
+        exercise_out = 'a' if exercise_all else f"exercise_{int(exercise_raw):03d}"
     else:
         exercise_raw = _ask("Exercise number (or 'a' for all): ")
+        exercise_all = (exercise_raw == 'a')
+        exercise_out = 'a' if exercise_all else f"exercise_{int(exercise_raw):03d}"
 
-    exercise_all = (exercise_raw == 'a')
-    exercise_out = 'a' if exercise_all else f"exercise_{int(exercise_raw):03d}"
-
-    # --- Video (not asked if exercise='a') ---
-    if exercise_all:
+    # --- Video (not asked if exercise='a' or range) ---
+    if exercise_all or isinstance(exercise_out, list):
         video_out = 'a'
     elif args.video is not None:
         video_out = f"video_{int(args.video):03d}"
@@ -244,14 +255,28 @@ def _run_pipeline(subject: str, exercise: str, video: str,
 def main():
     parser = argparse.ArgumentParser(
         description="Full landmark-to-IK pipeline. Use 'a' for batch mode.")
-    parser.add_argument("--subject",  type=int, default=None)
-    parser.add_argument("--exercise", type=int, default=None)
-    parser.add_argument("--video",    type=int, default=None)
+    parser.add_argument("--subject",   type=int, default=None)
+    parser.add_argument("--exercise",  type=int, default=None)
+    parser.add_argument("--video",     type=int, default=None)
+    parser.add_argument("--ex-start",  type=int, default=None, metavar="N",
+                        help="First exercise of a range (inclusive). "
+                             "Must be used together with --ex-end.")
+    parser.add_argument("--ex-end",    type=int, default=None, metavar="N",
+                        help="Last exercise of a range (inclusive). "
+                             "Must be used together with --ex-start.")
     parser.add_argument("--start", type=int, default=1, metavar="N",
                         help="Start from step N (1-5). Default: 1")
     parser.add_argument("--stop",  type=int, default=6, metavar="N",
                         help="Stop after step N (1-5). Default: 5")
     args = parser.parse_args()
+
+    # Validate --ex-start / --ex-end
+    if (args.ex_start is None) != (args.ex_end is None):
+        parser.error("--ex-start and --ex-end must be used together.")
+    if args.ex_start is not None and args.ex_start > args.ex_end:
+        parser.error("--ex-start must be <= --ex-end.")
+    if args.ex_start is not None and args.exercise is not None:
+        parser.error("--exercise and --ex-start/--ex-end are mutually exclusive.")
 
     try:
         subject_out, exercise_out, video_out = _parse_inputs(args)

@@ -60,7 +60,7 @@ def _fk_figure(trajectory: np.ndarray, exercise_num: int, label: str) -> plt.Fig
         r_elbow.append(e_r)
         r_wrist.append(w_r)
 
-        q_l = np.deg2rad(np.pad(q_deg[4:8], (0, 3)))
+        q_l = np.deg2rad(np.pad(q_deg[8:12], (0, 3)))
         e_l, w_l = fk(q_l, 'left')
         l_elbow.append(e_l)
         l_wrist.append(w_l)
@@ -129,6 +129,101 @@ def _fk_figure(trajectory: np.ndarray, exercise_num: int, label: str) -> plt.Fig
     return fig
 
 
+
+# ---------------------------------------------------------------------------
+# Joint angles figure builder
+# ---------------------------------------------------------------------------
+RIGHT_JOINTS = [
+    ('r_shoulder_pitch', 0, 'right'),
+    ('r_shoulder_roll',  1, 'right'),
+    ('r_arm_yaw',        2, 'right'),
+    ('r_elbow_pitch',    3, 'right'),
+]
+LEFT_JOINTS = [
+    ('l_shoulder_pitch', 0, 'left'),
+    ('l_shoulder_roll',  1, 'left'),
+    ('l_arm_yaw',        2, 'left'),
+    ('l_elbow_pitch',    3, 'left'),
+]
+JOINT_LABELS = {
+    'r_shoulder_pitch': 'Shoulder Pitch', 'r_shoulder_roll': 'Shoulder Roll',
+    'r_arm_yaw':        'Arm Yaw',        'r_elbow_pitch':   'Elbow Pitch',
+    'l_shoulder_pitch': 'Shoulder Pitch', 'l_shoulder_roll': 'Shoulder Roll',
+    'l_arm_yaw':        'Arm Yaw',        'l_elbow_pitch':   'Elbow Pitch',
+}
+LINE_COLOR = '#2ca02c'
+J_PADDING  = 5.0
+
+from utilities.config import JOINT_LIMITS_DEG
+
+
+def _joints_figure(trajectory: np.ndarray, exercise_num: int, label: str) -> plt.Figure:
+    '''
+    Plots joint angles (same layout as plot_joints.py) for a given trajectory.
+
+    Parameters:
+        trajectory   : (N, 16) array of joint angles in degrees (JOINT_COLS order)
+        exercise_num : exercise number, used in the figure title
+        label        : e.g. 'canonical' or 'baseline'
+
+    Returns:
+        fig : matplotlib Figure (caller is responsible for closing it)
+    '''
+    df     = pd.DataFrame(trajectory, columns=JOINT_COLS)
+    frames = np.arange(len(df))
+
+    n_rows = max(len(RIGHT_JOINTS), len(LEFT_JOINTS))
+    fig, axes = plt.subplots(
+        nrows=n_rows, ncols=2,
+        figsize=(14, 2.8 * n_rows),
+        sharex=False,
+    )
+    if n_rows == 1:
+        axes = np.array([axes])
+
+    fig.suptitle(
+        f'Joint angles ({label}) — exercise_{exercise_num:03d}\n'
+        f'(Y scale = robot joint limits)',
+        fontsize=13, fontweight='bold', y=1.01,
+    )
+    axes[0, 0].set_title('Right arm', fontsize=12, fontweight='bold', pad=8)
+    axes[0, 1].set_title('Left arm',  fontsize=12, fontweight='bold', pad=8)
+
+    for row_idx in range(n_rows):
+        ax_r = axes[row_idx, 0]
+        if row_idx < len(RIGHT_JOINTS):
+            col, lim_idx, side = RIGHT_JOINTS[row_idx]
+            if col in df.columns:
+                ax_r.plot(frames, df[col].values, color=LINE_COLOR, linewidth=1.5)
+            ax_r.set_ylabel(f'{JOINT_LABELS.get(col, col)}\n(deg)', fontsize=9)
+            y_min, y_max = JOINT_LIMITS_DEG[side][lim_idx]
+            ax_r.set_ylim(y_min - J_PADDING, y_max + J_PADDING)
+        else:
+            ax_r.set_visible(False)
+
+        ax_l = axes[row_idx, 1]
+        if row_idx < len(LEFT_JOINTS):
+            col, lim_idx, side = LEFT_JOINTS[row_idx]
+            if col in df.columns:
+                ax_l.plot(frames, df[col].values, color=LINE_COLOR, linewidth=1.5)
+            y_min, y_max = JOINT_LIMITS_DEG[side][lim_idx]
+            ax_l.set_ylim(y_min - J_PADDING, y_max + J_PADDING)
+        else:
+            ax_l.set_visible(False)
+
+        for ax in (ax_r, ax_l):
+            if ax.get_visible():
+                ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
+                ax.yaxis.set_minor_locator(ticker.MultipleLocator(10))
+                ax.grid(True, which='major', linestyle='--', linewidth=0.6, alpha=0.7)
+                ax.grid(True, which='minor', linestyle=':',  linewidth=0.4, alpha=0.4)
+                ax.tick_params(axis='both', labelsize=8)
+                if row_idx == n_rows - 1:
+                    ax.set_xlabel('Frame', fontsize=9)
+
+    fig.tight_layout()
+    return fig
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -189,9 +284,16 @@ def main():
         fig      = _fk_figure(trajectory, args.exercise, label)
         out_path = output_dir / f'{label}_fk.png'
         fig.savefig(out_path, dpi=150, bbox_inches='tight')
-        # plt.show()
         plt.close(fig)
         print(f'  Saved → {out_path.relative_to(DATA_ROOT)}')
+
+        joints_dir = exercise_dir / 'plots_joints'
+        joints_dir.mkdir(parents=True, exist_ok=True)
+        fig_j      = _joints_figure(trajectory, args.exercise, label)
+        out_path_j = joints_dir / f'joints_{label}.png'
+        fig_j.savefig(out_path_j, dpi=150, bbox_inches='tight')
+        plt.close(fig_j)
+        print(f'  Saved → {out_path_j.relative_to(DATA_ROOT)}')
         any_saved = True
 
     if not any_saved:

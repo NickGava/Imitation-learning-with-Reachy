@@ -32,22 +32,28 @@ GRIPPER_RANGE = {
 # ---------------------------------------------------------------------------
 JOINT_COLS = [
     'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
+    'r_forearm_yaw', 'r_wrist_pitch', 'r_wrist_roll', 'r_gripper',
     'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
+    'l_forearm_yaw', 'l_wrist_pitch', 'l_wrist_roll', 'l_gripper',
 ]
+# JOINT_COLS = [
+#     'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
+#     'l_shoulder_pitch', 'l_shoulder_roll', 'l_arm_yaw', 'l_elbow_pitch',
+# ]
 # Names of the coordinates of the head of the robot
 HEAD_COLS = ['head_x', 'head_y', 'head_z']
 
 # ---------------------------------------------------------------------------
 # Default rest pose for the robot (in degrees)
 # ---------------------------------------------------------------------------
-REST_POSE: Dict[str, float] = {
-    'r_shoulder_pitch':  0.0,  'r_shoulder_roll': -5.0,  'r_arm_yaw':     0.0,
-    'r_elbow_pitch':   -90.0,  'r_forearm_yaw':    0.0,  'r_wrist_pitch':  0.0,
-    'r_wrist_roll':      0.0,  'r_gripper':      0.0,
-    'l_shoulder_pitch':  0.0,  'l_shoulder_roll':  5.0,  'l_arm_yaw':     0.0,
-    'l_elbow_pitch':   -90.0,  'l_forearm_yaw':    0.0,  'l_wrist_pitch':  0.0,
-    'l_wrist_roll':      0.0,  'l_gripper':       0.0,
-}
+# REST_POSE: Dict[str, float] = {
+#     'r_shoulder_pitch':  0.0,  'r_shoulder_roll': -5.0,  'r_arm_yaw':     0.0,
+#     'r_elbow_pitch':   -90.0,  'r_forearm_yaw':    0.0,  'r_wrist_pitch':  0.0,
+#     'r_wrist_roll':      0.0,  'r_gripper':      0.0,
+#     'l_shoulder_pitch':  0.0,  'l_shoulder_roll':  5.0,  'l_arm_yaw':     0.0,
+#     'l_elbow_pitch':   -90.0,  'l_forearm_yaw':    0.0,  'l_wrist_pitch':  0.0,
+#     'l_wrist_roll':      0.0,  'l_gripper':       0.0,
+# }
 STARTING_POSE: Dict[str, float] = {
     'r_shoulder_pitch':  -20.0,  'r_shoulder_roll': 0.0,  'r_arm_yaw':     0.0,
     'r_elbow_pitch':   0.0,  'r_forearm_yaw':    0.0,  'r_wrist_pitch':  0.0,
@@ -102,18 +108,18 @@ POSE_INDICES = {
     'right_hip':      24,
 }
 
-HAND_INDICES = {
-    'thumb_tip':  4,   # hand closure
-    'index_tip':  8,   # hand closure
-    'wrist':      0,   # hand orientation
-    'index_mcp':  5,   # hand orientation
-    'pinky_mcp': 17,   # hand orientation
-}
+# HAND_INDICES = {
+#     'thumb_tip':  4,   # hand closure
+#     'index_tip':  8,   # hand closure
+#     'wrist':      0,   # hand orientation
+#     'index_mcp':  5,   # hand orientation
+#     'pinky_mcp': 17,   # hand orientation
+# }
 
-FACE_INDICES = {
-    'nose_tip':   4,    # approximate face origin
-    'chin':     152,    # defines vertical axis (bottom)
-    'forehead':  10,    # defines vertical axis (top)
-    'left_eye':  33,    # defines lateral axis (right in image = person's left)
-    'right_eye': 263,   # defines lateral axis (left in image = person's right)
-}
+# FACE_INDICES = {
+#     'nose_tip':   4,    # approximate face origin
+#     'chin':     152,    # defines vertical axis (bottom)
+#     'forehead':  10,    # defines vertical axis (top)
+#     'left_eye':  33,    # defines lateral axis (right in image = person's left)
+#     'right_eye': 263,   # defines lateral axis (left in image = person's right)
+# }

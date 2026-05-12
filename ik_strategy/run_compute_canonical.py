@@ -22,7 +22,7 @@ from pathlib import Path
 
 from utilities.config import DATA_ROOT
 from canonical_approach.compute_canonical import _process_exercise
-from utilities.plot_baseline_canonical import _fk_figure, _load_trajectory
+from utilities.plot_baseline_canonical import _fk_figure, _load_trajectory, _joints_figure
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +110,7 @@ def main():
             canonical_path = dataset_root / ex_name / 'canonical.csv'
             plot_dir       = dataset_root / ex_name / 'plots'
             plot_dir.mkdir(parents=True, exist_ok=True)
+            joints_dir = dataset_root / ex_name / 'plots_joints'
             try:
                 trajectory = _load_trajectory(canonical_path)
                 fig        = _fk_figure(trajectory, ex_num, 'canonical')
@@ -117,6 +118,13 @@ def main():
                 fig.savefig(out_path, dpi=150, bbox_inches='tight')
                 plt.close(fig)
                 print(f'  Plot saved → {out_path.relative_to(DATA_ROOT)}')
+                
+                joints_dir.mkdir(parents=True, exist_ok=True)
+                fig_j      = _joints_figure(trajectory, args.exercise, "canonical")
+                out_path_j = joints_dir / f'joints_canonical.png'
+                fig_j.savefig(out_path_j, dpi=150, bbox_inches='tight')
+                plt.close(fig_j)
+                print(f'  Saved → {out_path_j.relative_to(DATA_ROOT)}')
             except Exception as e:
                 print(f'  [WARN] Plot failed for {ex_name}: {e}')
         except Exception as e:
