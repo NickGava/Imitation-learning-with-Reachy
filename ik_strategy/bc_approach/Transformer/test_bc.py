@@ -56,6 +56,12 @@ SIMULATOR_HOST  = 'localhost'
 MIN_FRAME_DELAY = 0.033
 GOTO_DURATION   = 2.0
 
+# Heuristic stopping criterion: stop when both wrists are within
+# STOP_THRESHOLD_M metres of their start FK positions for STOP_WINDOW
+# consecutive frames, but only after having first moved away from it.
+STOP_THRESHOLD_M = 0.20   # metres
+STOP_WINDOW      = 40
+
 
 # ---------------------------------------------------------------------------
 # Start pose
@@ -205,13 +211,25 @@ def load_ensemble(model_dir: Path):
 # Autoregressive loop (ensemble)
 # ---------------------------------------------------------------------------
 def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
-                reachy=None, closed_loop: bool = False) -> np.ndarray:
+                reachy=None, closed_loop: bool = False,
+                stop_threshold: float = STOP_THRESHOLD_M,
+                stop_window:    int   = STOP_WINDOW) -> np.ndarray:
     """
     Runs the autoregressive loop using an ensemble of Transformer models.
 
     Maintains a rolling history of SEQ_LEN + VELOCITY_LAG frames to compute
     dq for each frame in the window. All K models predict independently and
     the final delta is their mean.
+
+    Heuristic stopping criterion (disabled if stop_threshold is None):
+      Two-phase state machine:
+        1. DEPARTED  — waits until at least one wrist moves more than
+                       stop_threshold metres away from its start FK position.
+        2. RETURNED  — once departed, counts consecutive frames where both
+                       wrists are within stop_threshold of the start position.
+                       Stops after stop_window such frames.
+      In closed-loop mode the check is performed on q_actual (encoder reading)
+      rather than q_new, consistent with what gets stored in history.
     """
     start_q  = np.array([start_pose[c] for c in JOINT_COLS], dtype=np.float32)
     seq_len  = ensemble[0][2]
@@ -220,10 +238,17 @@ def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
     history = collections.deque(
         [start_q.copy() for _ in range(hist_len)], maxlen=hist_len
     )
-    q_traj = np.zeros((n_steps, N_JOINTS), dtype=np.float32)
+    q_traj      = np.zeros((n_steps, N_JOINTS), dtype=np.float32)
+    departed    = False
+    consecutive = 0
+
+    # Pre-compute wrist FK positions at start pose
+    if stop_threshold is not None:
+        _, r_wrist_start = fk(start_q[0:4],  'right')
+        _, l_wrist_start = fk(start_q[8:12], 'left')
 
     for step in range(n_steps):
-        hist_arr = np.array(history, dtype=np.float32)  # (hist_len, 8)
+        hist_arr = np.array(history, dtype=np.float32)
 
         # Build (seq_len, 16) window with [q, dq] per timestep
         window = np.zeros((seq_len, N_INPUT), dtype=np.float32)
@@ -237,7 +262,7 @@ def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
         deltas = []
         for model, scaler, _ in ensemble:
             window_norm = scaler.transform(window).astype(np.float32)
-            x = torch.tensor(window_norm[np.newaxis])  # (1, seq_len, 16)
+            x = torch.tensor(window_norm[np.newaxis])
             with torch.no_grad():
                 delta = model(x).numpy()[0]
             deltas.append(delta)
@@ -255,9 +280,34 @@ def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
             )
             history.append(q_actual)
             q_traj[step] = q_actual
+            q_check = q_actual   # use encoder reading for stop criterion
         else:
             history.append(q_new)
             q_traj[step] = q_new
+            q_check = q_new
+
+        # --- Heuristic stopping criterion (FK-based, departed → returned) ---
+        if stop_threshold is not None:
+            _, r_wrist_cur = fk(q_check[0:4],  'right')
+            _, l_wrist_cur = fk(q_check[8:12], 'left')
+            dist_r = float(np.linalg.norm(r_wrist_cur - r_wrist_start))
+            dist_l = float(np.linalg.norm(l_wrist_cur - l_wrist_start))
+            dist   = max(dist_r, dist_l)
+
+            if not departed:
+                if dist > stop_threshold:
+                    departed = True
+            else:
+                if dist < stop_threshold:
+                    consecutive += 1
+                    if consecutive >= stop_window:
+                        actual_steps = step + 1
+                        print(f'  [STOP] Exercise end detected at step {actual_steps} '
+                              f'(wrist dist R={dist_r:.3f}m  L={dist_l:.3f}m, '
+                              f'threshold={stop_threshold}m)')
+                        return q_traj[:actual_steps]
+                else:
+                    consecutive = 0
 
     return q_traj
 
@@ -455,6 +505,15 @@ def main():
     parser.add_argument('--closed-loop', action='store_true',
                         help='Read present_position from robot after each step (requires --sim).')
     parser.add_argument('--host',        type=str, default=SIMULATOR_HOST)
+    parser.add_argument('--no-stop',     action='store_true',
+                        help='Disable heuristic stopping criterion (run for full n_steps).')
+    parser.add_argument('--stop-threshold', type=float, default=STOP_THRESHOLD_M,
+                        metavar='M',
+                        help=f'Wrist distance threshold in metres (default: {STOP_THRESHOLD_M}).')
+    parser.add_argument('--stop-window', type=int, default=STOP_WINDOW,
+                        metavar='N',
+                        help=f'Consecutive frames below threshold before stopping '
+                             f'(default: {STOP_WINDOW}).')
     args = parser.parse_args()
 
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}'
@@ -464,18 +523,19 @@ def main():
     ensemble   = load_ensemble(model_dir)
     start_pose = _load_start_pose(exercise_dir)
 
-    if args.steps is not None:
-        n_steps = args.steps
-        print(f'Steps: {n_steps}  (from --steps)')
-    elif (exercise_dir / 'canonical.csv').exists():
-        n_steps = len(pd.read_csv(exercise_dir / 'canonical.csv'))
-        print(f'Steps: {n_steps}  (from canonical.csv)')
-    elif (exercise_dir / 'baseline.csv').exists():
-        n_steps = len(pd.read_csv(exercise_dir / 'baseline.csv'))
-        print(f'Steps: {n_steps}  (from baseline.csv)')
-    else:
-        n_steps = 300
-        print(f'Steps: {n_steps}  (default)')
+    # if args.steps is not None:
+    #     n_steps = args.steps
+    #     print(f'Steps: {n_steps}  (from --steps)')
+    # elif (exercise_dir / 'canonical.csv').exists():
+    #     n_steps = len(pd.read_csv(exercise_dir / 'canonical.csv'))
+    #     print(f'Steps: {n_steps}  (from canonical.csv)')
+    # elif (exercise_dir / 'baseline.csv').exists():
+    #     n_steps = len(pd.read_csv(exercise_dir / 'baseline.csv'))
+    #     print(f'Steps: {n_steps}  (from baseline.csv)')
+    # else:
+    #     n_steps = 300
+    #     print(f'Steps: {n_steps}  (default)')
+    n_steps = 1000
 
     reachy      = None
     closed_loop = args.closed_loop and args.sim
@@ -487,11 +547,16 @@ def main():
         if closed_loop:
             print('Closed-loop mode: reading present_position from robot.\n')
 
+    stop_threshold = None if args.no_stop else args.stop_threshold
+
     all_fk = []
     for run in range(1, args.runs + 1):
         print(f'\n--- Run {run} / {args.runs} ---')
         q_traj = run_bc_loop(ensemble, n_steps, start_pose,
-                             reachy=reachy, closed_loop=closed_loop)
+                             reachy          = reachy,
+                             closed_loop     = closed_loop,
+                             stop_threshold  = stop_threshold,
+                             stop_window     = args.stop_window)
         r_fk, l_fk = compute_fk_trajectory(q_traj)
         all_fk.append((r_fk, l_fk))
 

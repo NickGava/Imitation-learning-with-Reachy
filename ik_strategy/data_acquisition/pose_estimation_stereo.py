@@ -19,7 +19,7 @@ from stereo_config import (
 
 # __________ Tunable variables __________
 DISPLAY_WIDTH = 400
-Z_CONF_THRESHOLD = 0.15         # confidence threshold for z stereo
+Z_CONF_THRESHOLD = 0.8        # confidence threshold for z stereo
 MAX_Z_DELTA_M = 0.15            # Threshold for spikes of z stereo
 MAX_PERSISTENCE_FRAMES = 35     # Threshold for old values of z stereo
 BODY_Z_MAX = 1.2                # Threshold for body center z coordinate
@@ -218,8 +218,8 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
 
             # _____ Save (or not) z_stereo in z _____
             if z_stereo is not None:
-                z_body = z*(1-confidence) + (z_stereo - sh_z_stereo)*confidence        # Mix approach 
-                # z_body = z_stereo - sh_z_stereo                                      # Full stereo
+                # z_body = z*(1-confidence) + (z_stereo - sh_z_stereo)*confidence        # Mix approach 
+                z_body = z_stereo - sh_z_stereo                                      # Full stereo
                 if abs(z_body) <= BODY_Z_MAX:
                     z = z_body
                 else:                                   # Tolgo i valori rivelatisi sbagliati dai dizionari

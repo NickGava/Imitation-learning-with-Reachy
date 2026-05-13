@@ -6,11 +6,10 @@
             "type": "debugpy",
             "request": "launch",
 
-            "program": "${workspaceFolder}/ik_strategy/run_simulation.py",
+            "program": "${workspaceFolder}/ik_strategy/run_data_acquisition.py",
             "cwd": "${workspaceFolder}",
-            "args": ["--mode", "baseline",
-                    "--subject", "3",
-                    "--exercise", "12",
+            "args": ["--subject", "1",
+                    "--exercise", "1",
                     "--video", "1",
                 ],
 
