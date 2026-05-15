@@ -9,7 +9,7 @@
             "program": "${workspaceFolder}/ik_strategy/run_data_acquisition.py",
             "cwd": "${workspaceFolder}",
             "args": ["--subject", "1",
-                    "--exercise", "1",
+                    "--exercise", "4",
                     "--video", "1",
                 ],
 

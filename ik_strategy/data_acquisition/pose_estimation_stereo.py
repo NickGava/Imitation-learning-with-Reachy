@@ -208,11 +208,11 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
             u = int(round(lm.x * frame_w))      # 0 < lm.x < 1
             v = int(round(lm.y * frame_h))
             confidence = _stereo_confidence(disp_L, disp_R, u, v)
-
+            
             # _____ Using (or not) z_stereo _____
             if confidence >= Z_CONF_THRESHOLD:
                 z_raw = depth_map[v, u]
-                if np.isnan(z_raw) or z_raw < 0.3 or z_raw > 4.0:
+                if np.isnan(z_raw) or z_raw < 0.1 or z_raw > 4.0:
                     z_raw = None
             z_stereo = _resolve_z(name, z_raw, last_z_pose, last_z_age, i_frame)
 

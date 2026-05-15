@@ -85,7 +85,7 @@ def main():
                         help='Exercise number, or "a" for all 1-20. If omitted, you will be prompted.')
     parser.add_argument('--start',   type=int, default=1,
                         help='First exercise when running a range (default: 1). Ignored if --exercise is set.')
-    parser.add_argument('--end',     type=int, default=20,
+    parser.add_argument('--end',     type=int, default=26,
                         help='Last exercise when running a range (default: 20). Ignored if --exercise is set.')
     parser.add_argument('--runs',    type=int, default=1,
                         help='Number of autoregressive runs for test plots (default: 1)')
