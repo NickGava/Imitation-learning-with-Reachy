@@ -293,16 +293,15 @@ def print_summary(results: Dict, title: str) -> None:
               f'{r["peak_error_mean"]:>8.2f}  {r["pearson_mean"]:>8.3f}  '
               f'{r["smoothness"]:>10.4f}')
 
-    # Cartesian space
-    if any('cart_dtw_norm' in r for r in results.values()):
+    if any('cart_dtw' in r for r in results.values()):
         print(f'\n  [Cartesian space]\n  {"─"*80}')
-        print(f'  {"Metodo":<20}  {"DTW(m/f)":>9}  {"Rw(m)":>8}  '
+        print(f'  {"Metodo":<20}  {"DTW(m)":>9}  {"Rw(m)":>8}  '
               f'{"Lw(m)":>8}  {"Pearson":>8}  {"Smooth":>10}')
         print(f'  {"─"*80}')
         for m, r in results.items():
-            if 'cart_dtw_norm' not in r:
+            if 'cart_dtw' not in r:
                 continue
-            print(f'  {m:<20}  {r["cart_dtw_norm"]:>9.4f}  '
+            print(f'  {m:<20}  {r["cart_dtw"]:>9.2f}  '
                   f'{r["cart_rmse_r_wrist"]:>8.4f}  '
                   f'{r["cart_rmse_l_wrist"]:>8.4f}  '
                   f'{r["cart_pearson_mean"]:>8.3f}  '

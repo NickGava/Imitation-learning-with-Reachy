@@ -40,6 +40,7 @@ from scipy.interpolate import interp1d
 from scipy.signal import medfilt, savgol_filter
 
 from utilities.config import DATA_ROOT, JOINT_COLS, HEAD_COLS
+from utilities.split_utils import split_name, select_subjects
 
 OUTPUT_COLS = ['frame', 'timestamp'] + JOINT_COLS 
 
@@ -50,7 +51,7 @@ DEFAULT_REACH    = 15
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _load_sequences(landmarks_root: Path, exercise_num: int, filter_subject: Optional[int]) -> List[pd.DataFrame]:
+def _load_sequences(landmarks_root, exercise_num, filter_subject=None, selected_subjects=None) -> List[pd.DataFrame]:
     '''
     Crawls the landmarks folder and loads all joint_ik.csv files for the given exercise.
     Returns a list of DataFrames, one per video.
@@ -70,6 +71,10 @@ def _load_sequences(landmarks_root: Path, exercise_num: int, filter_subject: Opt
 
     for subj_dir in sorted(landmarks_root.glob('subject_*')):
         subject_num = int(subj_dir.name.split('_')[1])
+        if filter_subject is not None and subject_num != filter_subject:
+            continue
+        if selected_subjects is not None and subject_num not in selected_subjects:
+            continue
         if filter_subject is not None and subject_num != filter_subject:
             continue
 
@@ -275,18 +280,11 @@ def _smooth_canonical(canonical: np.ndarray, window: int) -> np.ndarray:
 
 
 
-def _process_exercise(
-    exercise_num: int,
-    landmarks_root: Path,
-    dataset_root: Path,
-    filter_subject: Optional[int],
-    smooth: bool = True,
-    smooth_window: int = 11,
-    amplitude_percentile: float = 80.0,
-    amplitude_rescale: bool = True,
-    max_iter: int = DEFAULT_MAX_ITER,
-    reach: int = DEFAULT_REACH,
-) -> None:
+def _process_exercise(exercise_num, landmarks_root, dataset_root,
+                      filter_subject=None, n_demos=55,
+                      smooth=True, smooth_window=11,
+                      amplitude_percentile=80.0, amplitude_rescale=True,
+                      max_iter=30, reach=15):
     '''
     Loads all joint_ik.csv files for one exercise, runs ShapeDBA separately on
     joint angles and head gaze, and saves the combined canonical.csv.
@@ -304,12 +302,20 @@ def _process_exercise(
         reach                : ShapeDTW neighborhood size
     '''
     exercise_name = f'exercise_{exercise_num:03d}'
+    
+    all_subj_dirs = sorted(landmarks_root.glob('subject_*'))
+    selected      = select_subjects(all_subj_dirs, n_demos)
+    selected_nums = [int(d.name.split('_')[1]) for d in selected]
+    print(f'  Subjects for n_{n_demos:02d}: {selected_nums}')
+
     print(f'\n{"="*60}')
     print(f'  Exercise {exercise_num:03d}')
     print(f'{"="*60}')
 
     # Load sequences
-    sequences = _load_sequences(landmarks_root, exercise_num, filter_subject)
+    sequences = _load_sequences(landmarks_root, exercise_num,
+                                filter_subject=filter_subject,
+                                selected_subjects=selected_nums)
 
     if len(sequences) < 1:
         print(f'Need at least 2 sequences for DBA, found {len(sequences)}. Skipping.')
@@ -379,9 +385,9 @@ def _process_exercise(
         out[col] = canonical_head[:, j]
 
     # Save
-    output_dir  = dataset_root / exercise_name
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / 'canonical.csv'
+    split_dir   = dataset_root / exercise_name / split_name(n_demos)
+    split_dir.mkdir(parents=True, exist_ok=True)
+    output_path = split_dir / 'canonical.csv'
     out[OUTPUT_COLS].to_csv(output_path, index=False)
 
     # Summary
@@ -405,6 +411,7 @@ def main():
     parser.add_argument('--amplitude-percentile', type=float, default=80.0, help='Percentile used when rescaling amplitude (default: 80). 100 = absolute max of all demos.')
     parser.add_argument('--no-smooth', action='store_true', help='Disable post-ShapeDBA smoothing of the canonical.')
     parser.add_argument('--smooth-window', type=int, default=11, help='Window size for median + Savitzky-Golay smoothing (default: 11, must be odd).')
+    parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
     args = parser.parse_args()
 
     landmarks_root = DATA_ROOT / 'landmarks'
@@ -442,6 +449,7 @@ def main():
             landmarks_root       = landmarks_root,
             dataset_root         = dataset_root,
             filter_subject       = args.subject,
+            n_demos              = args.n_demos,
             max_iter             = args.max_iter,
             amplitude_rescale    = not args.no_amplitude_rescale,
             amplitude_percentile = args.amplitude_percentile,

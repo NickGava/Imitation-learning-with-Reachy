@@ -31,6 +31,7 @@ import pandas as pd
 from pathlib import Path
 
 from utilities.config import DATA_ROOT, JOINT_COLS
+from utilities.split_utils import split_name, select_subjects
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -94,6 +95,7 @@ def process_file(path: Path, subject: int, exercise: int, video: int):
 def main():
     parser = argparse.ArgumentParser(description='Build BC dataset for one exercise.')
     parser.add_argument('exercise', type=int, help='Exercise number (e.g. 1)')
+    parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
     args = parser.parse_args()
 
     exercise_num   = args.exercise
@@ -101,13 +103,18 @@ def main():
     landmarks_root = DATA_ROOT / 'landmarks'
     output_dir     = DATA_ROOT / 'dataset' / exercise_name
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path    = output_dir / 'bc_dataset.csv'
+    split_d     = output_dir / split_name(args.n_demos)
+    split_d.mkdir(parents=True, exist_ok=True)
+    output_path = split_d / 'bc_dataset.csv'
 
     print(f'Building BC dataset for {exercise_name}')
     print(f'Scanning: {landmarks_root}\n')
 
     pattern   = f'*/exercise_{exercise_num:03d}/*/joint_ik.csv'
     all_files = sorted(landmarks_root.glob(pattern))
+    subj_dirs = sorted({p.parent.parent.parent for p in all_files})
+    selected  = select_subjects(subj_dirs, args.n_demos)
+    all_files = [p for p in all_files if p.parent.parent.parent in selected]
 
     if not all_files:
         print(f'No joint_ik.csv files found for {exercise_name}.')

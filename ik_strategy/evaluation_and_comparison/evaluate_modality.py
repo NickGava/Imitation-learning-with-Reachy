@@ -1,192 +1,272 @@
-'''
+"""
 evaluate_modality.py
 =============================================================================
-Analisi comparativa tra modalità di acquisizione: Stereo vs Mixed vs Mono.
+Analisi comparativa tra modalita di acquisizione: Stereo vs Mixed vs Mono.
 
-Risponde alla domanda: la complessità aggiuntiva della pipeline stereo porta
-un beneficio misurabile? Le due sorgenti (stereo + mono) possono essere
-combinate senza introdurre inconsistenze?
+Risponde alla domanda: la pipeline stereo porta un beneficio misurabile
+rispetto alla mono? Le due sorgenti possono essere combinate?
 
-Per ogni modalità (Stereo: 001–005, Mixed: 011–015, Mono: 021–025) e per
-ogni architettura BC, calcola le metriche su tutti gli esercizi disponibili,
-aggrega per modalità e produce i plot di confronto.
+Approccio: legge i results_summary.csv gia calcolati da evaluate_exercise.py
+per ogni esercizio del split richiesto. Non ricalcola metriche ne' inference.
+
+Prerequisito:
+  py -m evaluation_and_comparison.evaluate --all --n-demos 55
+  (o il n-demos desiderato)
 
 Output (in data/evaluation_modality/):
-    results_by_exercise.csv       — una riga per (esercizio × architettura)
-    results_aggregated.csv        — una riga per (modalità × architettura)
-    plot_dtw_modality.png
-    plot_rmse_modality.png
-    plot_pearson_modality.png
-    plot_smoothness_modality.png
-    plot_rmse_heatmap_<arch>.png  — uno per architettura
-    plot_dtw_per_exercise.png
-    plot_rmse_per_exercise.png
-    plot_pearson_per_exercise.png
+  results_by_exercise.csv     <- (esercizio x metodo)
+  results_aggregated.csv      <- (modalita x metodo), media sui 5 esercizi
+  plot_dtw_modality.png
+  plot_rmse_modality.png
+  plot_pearson_modality.png
+  plot_rmse_heatmap_MLP.png
+  plot_rmse_heatmap_GRU.png
+  plot_rmse_heatmap_Transformer.png
 
-Uso standalone:
-    py -m evaluation_and_comparison.evaluate_modality
-    py -m evaluation_and_comparison.evaluate_modality --steps 200
-'''
+Usage:
+  py -m evaluation_and_comparison.evaluate_modality
+  py -m evaluation_and_comparison.evaluate_modality --n-demos 55
+  py -m evaluation_and_comparison.evaluate_modality --n-demos 10
+"""
 
 import argparse
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from utilities.config import DATA_ROOT
-
-from evaluation_and_comparison._config  import (
-    ARCHITECTURES, MODALITY_GROUPS, get_exercise_type,
-)
-from evaluation_and_comparison._io      import (
-    load_baseline, load_canonical, load_bc_trajectory,
-)
-from evaluation_and_comparison._metrics import compute_metrics, aggregate_metrics
-from evaluation_and_comparison._plots   import (
-    plot_modality_grouped_bar, plot_modality_rmse_heatmap, plot_per_exercise_lines,
+from utilities.split_utils import split_name, N_DEMOS_SPLITS
+from evaluation_and_comparison._config import (
+    ARCHITECTURES, MODALITY_GROUPS, PALETTE, ACTIVE_LABELS,
+    get_exercise_type,
 )
 
 
-def run_modality_analysis() -> None:
-    '''
-    Per ogni modalità e ogni architettura, carica le traiettorie BC pre-generate
-    da test_bc.py, calcola le metriche su tutti gli esercizi disponibili,
-    aggrega per modalità e salva i risultati.
+METHOD_ORDER = ['Human demos', 'Canonical', 'MLP', 'GRU', 'Transformer']
 
-    Prerequisito: eseguire prima test_bc.py per ogni architettura e esercizio,
-    in modo che bc_trajectory.csv sia presente in dataset/exercise_NNN/{arch}/.
-    '''
-    output_dir = DATA_ROOT / 'evaluation_modality'
-    output_dir.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# I/O
+# ---------------------------------------------------------------------------
+
+def _load_exercise_results(exercise_num: int, n_demos: int) -> Optional[pd.DataFrame]:
+    """Legge results_summary.csv dal split corrispondente."""
+    path = (DATA_ROOT / 'dataset' / f'exercise_{exercise_num:03d}'
+            / split_name(n_demos) / 'evaluation' / 'results_summary.csv')
+    if not path.exists():
+        print(f'  [!] Mancante: exercise_{exercise_num:03d}/{split_name(n_demos)}/evaluation/results_summary.csv')
+        return None
+    df = pd.read_csv(path)
+    df['exercise_num']  = exercise_num
+    df['exercise_type'] = get_exercise_type(exercise_num)
+    df['modality']      = next(
+        mod for mod, nums in MODALITY_GROUPS.items() if exercise_num in nums
+    )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Plot helpers
+# ---------------------------------------------------------------------------
+
+def _grouped_bar_modality(agg: pd.DataFrame, metric: str,
+                           ylabel: str, title: str,
+                           output_path: Path) -> None:
+    """Grouped bar: asse X = architetture, colori = modalita."""
+    methods  = [m for m in ['Canonical'] + list(ARCHITECTURES.keys())
+                if m in agg['method'].values]
+    mods     = list(MODALITY_GROUPS.keys())
+    x        = np.arange(len(methods))
+    width    = 0.25
+    off0     = -(len(mods) - 1) / 2 * width
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for i, mod in enumerate(mods):
+        subset = agg[agg['modality'] == mod].set_index('method')
+        vals   = [subset.loc[m, metric] if m in subset.index else np.nan
+                  for m in methods]
+        bars = ax.bar(x + off0 + i * width, vals, width,
+                      label=mod, color=PALETTE.get(mod, f'C{i}'),
+                      edgecolor='white', linewidth=1.0, alpha=0.88)
+        for bar, val in zip(bars, vals):
+            if not np.isnan(val):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + abs(val) * 0.02,
+                        f'{val:.3f}', ha='center', va='bottom', fontsize=7.5)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(methods, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=12, fontweight='bold')
+    ax.legend(title='Modality', fontsize=10)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(axis='y', alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Saved -> {output_path.name}')
+
+
+def _rmse_heatmap(agg: pd.DataFrame, arch: str, output_path: Path) -> None:
+    """Heatmap RMSE joint per (modalita x joint) per una singola architettura."""
+    # Per questa heatmap serve results_per_joint.csv, non results_summary.
+    # Se non disponibile, skip silenzioso.
+    print(f'  [skip] heatmap RMSE per joint non disponibile da results_summary '
+          f'(serve results_per_joint.csv) — {arch}')
+
+
+def _line_per_exercise(df: pd.DataFrame, metric: str,
+                        ylabel: str, title: str,
+                        output_path: Path) -> None:
+    """Line plot: asse X = tipo esercizio (1-5), linee per (metodo x modalita)."""
+    ex_types = sorted(df['exercise_type'].unique())
+    methods  = [m for m in ['Canonical'] + list(ARCHITECTURES.keys())
+                if m in df['method'].values]
+    ls_map   = {'Stereo': '-', 'Mixed': '--', 'Mono': ':'}
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for mod in MODALITY_GROUPS:
+        mod_df = df[df['modality'] == mod]
+        for method in methods:
+            sub  = mod_df[mod_df['method'] == method]
+            vals = [sub[sub['exercise_type'] == et][metric].mean()
+                    if not sub[sub['exercise_type'] == et].empty else np.nan
+                    for et in ex_types]
+            ax.plot(ex_types, vals,
+                    linestyle=ls_map[mod],
+                    color=PALETTE.get(method, '#333'),
+                    marker='o', linewidth=1.8, markersize=6,
+                    label=f'{method} [{mod}]', alpha=0.85)
+
+    ax.set_xticks(ex_types)
+    ax.set_xticklabels([f'Type {t}' for t in ex_types])
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=12, fontweight='bold')
+    ax.legend(fontsize=7.5, ncol=3, loc='best')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Saved -> {output_path.name}')
+
+
+# ---------------------------------------------------------------------------
+# Main analysis
+# ---------------------------------------------------------------------------
+
+def run_modality_analysis(n_demos: int = 55) -> None:
+    """
+    Legge i results_summary.csv gia calcolati per ogni esercizio
+    del split n_demos, aggrega per modalita e produce i plot.
+    """
+    out_dir = DATA_ROOT / 'evaluation_modality'
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'\n{"="*65}')
-    print('  ANALISI MODALITY — Stereo vs Mixed vs Mono')
+    print(f'  ANALISI MODALITY  --  split {split_name(n_demos)}')
     print(f'{"="*65}')
 
-    # ex_results[exercise_num][arch] = metrics
-    ex_results: Dict[int, Dict[str, Dict]] = {}
-    # agg[modality][arch] = metrics aggregati (media sui 5 esercizi della modalità)
-    agg: Dict[str, Dict[str, Dict]] = {mod: {} for mod in MODALITY_GROUPS}
-    csv_rows: List[Dict] = []
-
+    # Carica tutti i risultati disponibili
+    all_dfs = []
     for mod, ex_nums in MODALITY_GROUPS.items():
-        print(f'\n{"─"*50}')
-        print(f'  Modalità: {mod}')
-        print(f'{"─"*50}')
-        arch_all: Dict[str, List[Dict]] = {a: [] for a in ARCHITECTURES}
-
+        print(f'\n  {mod}:')
         for ex_num in ex_nums:
-            exercise_name = f'exercise_{ex_num:03d}'
-            dataset_dir   = DATA_ROOT / 'dataset' / exercise_name
+            df = _load_exercise_results(ex_num, n_demos)
+            if df is not None:
+                all_dfs.append(df)
+                print(f'    exercise_{ex_num:03d}: {len(df)} metodi')
 
-            if not dataset_dir.is_dir():
-                print(f'  [!] {exercise_name} non trovato, skip.')
-                continue
+    if not all_dfs:
+        print('\nNessun risultato trovato. Eseguire prima:')
+        print(f'  py -m evaluation_and_comparison.evaluate --all --n-demos {n_demos}')
+        return
 
-            print(f'\n  Exercise {ex_num:03d}')
-            baseline = load_baseline(dataset_dir)
-            if baseline is None:
-                continue
+    by_ex = pd.concat(all_dfs, ignore_index=True)
 
-            canonical  = load_canonical(dataset_dir)
-            ex_results.setdefault(ex_num, {})
+    # Salva CSV raw
+    p = out_dir / 'results_by_exercise.csv'
+    by_ex.to_csv(p, index=False)
+    print(f'\n  Saved -> {p.name}')
 
-            for arch_name in ARCHITECTURES:
-                print(f'    [{arch_name}]', end=' ', flush=True)
-                traj = load_bc_trajectory(dataset_dir, arch_name)
-                if traj is None:
-                    continue
-                met = compute_metrics(traj, baseline, label=f'{arch_name}/{ex_num:03d}')
-                ex_results[ex_num][arch_name] = met
-                arch_all[arch_name].append(met)
-                csv_rows.append({
-                    'modality'     : mod,
-                    'exercise_num' : ex_num,
-                    'exercise_type': get_exercise_type(ex_num),
-                    'architecture' : arch_name,
-                    **{k: v for k, v in met.items() if not hasattr(v, '__len__')},
-                })
+    # Aggrega per (modalita x metodo) — media sui 5 esercizi
+    metric_cols = [c for c in by_ex.columns
+                   if c not in ('method', 'modality', 'exercise_num', 'exercise_type')]
+    agg = (by_ex.groupby(['modality', 'method'])[metric_cols]
+                 .mean()
+                 .reset_index())
+    p = out_dir / 'results_aggregated.csv'
+    agg.to_csv(p, index=False)
+    print(f'  Saved -> {p.name}')
 
-        for arch_name, met_list in arch_all.items():
-            if met_list:
-                agg[mod][arch_name] = aggregate_metrics(met_list)
-
-    # --- Salvataggio CSV ----------------------------------------------------
-    if csv_rows:
-        p = output_dir / 'results_by_exercise.csv'
-        pd.DataFrame(csv_rows).to_csv(p, index=False)
-        print(f'\n  Saved -> {p.name}')
-
-    agg_rows = [
-        {'modality': mod, 'architecture': arch,
-         **{k: v for k, v in met.items() if not hasattr(v, '__len__')}}
-        for mod, arch_mets in agg.items()
-        for arch, met in arch_mets.items()
-    ]
-    if agg_rows:
-        p = output_dir / 'results_aggregated.csv'
-        pd.DataFrame(agg_rows).to_csv(p, index=False)
-        print(f'  Saved -> {p.name}')
-
-    # --- Plot aggregati per modalità ----------------------------------------
-    print('\nGenerazione plot analisi modality ...')
+    # Plot
+    print('\n  Generazione plot ...')
     for metric, ylabel, fname in [
-        ('dtw_distance', 'DTW distance (↓ meglio)',            'plot_dtw_modality.png'),
-        ('rmse_mean',    'RMSE medio su active joints (°)',     'plot_rmse_modality.png'),
-        ('pearson_mean', 'Pearson r medio  (↑ meglio)',         'plot_pearson_modality.png'),
-        ('smoothness',   'Smoothness −mean(jerk²) (↑ meglio)', 'plot_smoothness_modality.png'),
+        ('cart_dtw_norm',    'DTW (m/frame)  (lower=better)',  'plot_dtw_modality.png'),
+        ('cart_rmse_l_wrist','RMSE Lw (m)    (lower=better)',  'plot_rmse_lw_modality.png'),
+        ('cart_rmse_r_wrist','RMSE Rw (m)    (lower=better)',  'plot_rmse_rw_modality.png'),
+        ('cart_pearson_mean','Pearson cart   (higher=better)', 'plot_pearson_modality.png'),
+        ('rmse_mean',        'RMSE joint (deg)(lower=better)', 'plot_rmse_joint_modality.png'),
     ]:
-        plot_modality_grouped_bar(
+        if metric not in agg.columns:
+            continue
+        _grouped_bar_modality(
             agg, metric, ylabel=ylabel,
-            title=f'Modality Analysis — {ylabel}',
-            output_path=output_dir / fname)
+            title=f'Modality Analysis -- {ylabel}',
+            output_path=out_dir / fname)
 
-    # Heatmap RMSE per joint, una per architettura
-    for arch_name in ARCHITECTURES:
-        plot_modality_rmse_heatmap(
-            agg, arch_name,
-            output_dir / f'plot_rmse_heatmap_{arch_name}.png')
+    for metric, ylabel, fname in [
+        ('cart_dtw_norm',    'DTW (m/frame)',  'plot_dtw_per_exercise.png'),
+        ('cart_rmse_l_wrist','RMSE Lw (m)',    'plot_rmse_per_exercise.png'),
+        ('cart_pearson_mean','Pearson cart',   'plot_pearson_per_exercise.png'),
+    ]:
+        if metric not in by_ex.columns:
+            continue
+        _line_per_exercise(
+            by_ex, metric, ylabel,
+            title=f'Per-Exercise -- {ylabel}  [all modalities x methods]',
+            output_path=out_dir / fname)
 
-    # Line plot per-exercise (andamento al variare del tipo di esercizio)
-    if ex_results:
-        for metric, ylabel, fname in [
-            ('dtw_distance', 'DTW distance',  'plot_dtw_per_exercise.png'),
-            ('rmse_mean',    'RMSE (°)',       'plot_rmse_per_exercise.png'),
-            ('pearson_mean', 'Pearson r',      'plot_pearson_per_exercise.png'),
-        ]:
-            plot_per_exercise_lines(
-                ex_results, metric, ylabel,
-                title=f'Per-Exercise — {ylabel}  [all modalities × architectures]',
-                output_path=output_dir / fname)
-
-    # --- Riepilogo a terminale ----------------------------------------------
+    # Riepilogo a terminale
     print(f'\n{"="*72}')
-    print('  RIEPILOGO AGGREGATO PER MODALITÀ')
+    print(f'  RIEPILOGO -- split {split_name(n_demos)}')
     print(f'{"="*72}')
-    print(f'  {"Modality":<8} {"Arch":<14}  {"DTW":>8}  {"RMSE(°)":>8}  '
-          f'{"Pearson":>8}  {"Smooth":>10}')
-    print(f'  {"-"*66}')
+    print(f'  {"Modality":<8} {"Method":<16}  {"DTW(m/f)":>9}  '
+          f'{"RMSE Lw":>8}  {"Pearson":>8}')
+    print(f'  {"-"*60}')
     for mod in MODALITY_GROUPS:
-        for arch in ARCHITECTURES:
-            m = agg.get(mod, {}).get(arch)
-            if m:
-                print(f'  {mod:<8} {arch:<14}  '
-                      f'{m["dtw_distance"]:>8.2f}  {m["rmse_mean"]:>8.2f}  '
-                      f'{m["pearson_mean"]:>8.3f}  {m["smoothness"]:>10.4f}')
-    print(f'{"="*72}')
-    print(f'\n  Output → {output_dir}')
+        for method in ['Canonical'] + list(ARCHITECTURES.keys()):
+            row = agg[(agg['modality'] == mod) & (agg['method'] == method)]
+            if row.empty:
+                continue
+            r = row.iloc[0]
+            dtw  = r.get('cart_dtw_norm',    np.nan)
+            rmse = r.get('cart_rmse_l_wrist', np.nan)
+            pear = r.get('cart_pearson_mean', np.nan)
+            print(f'  {mod:<8} {method:<16}  {dtw:>9.4f}  '
+                  f'{rmse:>8.4f}  {pear:>8.3f}')
+
+    print(f'\n  Output -> {out_dir}')
 
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Standalone
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
         description='Analisi comparativa Stereo vs Mixed vs Mono.')
+    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS,
+                        help='Split da usare (default: 55).')
     args = parser.parse_args()
-    run_modality_analysis()
+    run_modality_analysis(args.n_demos)
     print('\nDone.')
 
 

@@ -61,43 +61,100 @@ def _side_joint_filter(active_side):
 # B. Plot per singolo esercizio
 # ============================================================================
 
-def plot_degradation_chain(results: Dict, output_dir: Path,
-                           exercise_num: int, modality: str) -> None:
+def plot_degradation_chain(results: Dict,
+                           human_demos_dtw: List[float],
+                           output_dir: Path,
+                           exercise_num: int,
+                           modality: str) -> None:
     '''
-    Bar chart della DTW cartesiana (metri) per ogni metodo nella degradation chain.
-    La DTW cartesiana  invariante alla ridondanza cinematica e interpretabile:
-    rappresenta la distanza media (m) del polso dalla traiettoria di riferimento
-    dopo allineamento temporale ottimale.
+    Degradation chain con box plot per le Human demos e marker singoli
+    per Canonical, MLP, GRU, Transformer.
 
-    Ordine atteso: Human demos  Canonical  MLP  GRU  Transformer
+    human_demos_dtw: lista di cart_dtw (m) calcolato per ogni demo individuale
+    vs baseline. Mostra la distribuzione reale della variabilita umana.
+
+    Risponde alla domanda: il BC cade dentro, sotto o sopra la distribuzione
+    delle dimostrazioni umane?
     '''
-    CHAIN_ORDER = ['Human demos', 'Canonical', 'MLP', 'GRU', 'Transformer']
+    import random
+    CHAIN_ORDER = ['Canonical', 'MLP', 'GRU', 'Transformer']
+    methods     = [m for m in CHAIN_ORDER if m in results and 'cart_dtw' in results[m]]
 
-    # Usa cart_dtw_norm (m/frame) se disponibile, altrimenti fallback a dtw_distance (gradi)
-    use_cart = any('cart_dtw_norm' in results.get(m, {}) for m in CHAIN_ORDER)
-    metric   = 'cart_dtw_norm' if use_cart else 'dtw_distance'
-    unit     = 'm/frame' if use_cart else 'deg'
+    if not methods and not human_demos_dtw:
+        return
 
-    methods  = [m for m in CHAIN_ORDER if m in results] + \
-               [m for m in results if m not in CHAIN_ORDER]
-    dtw_vals = [results[m].get(metric, float('nan')) for m in methods]
-    colors   = [PALETTE.get(m, '#95a5a6') for m in methods]
+    # --- Setup figure ---
+    n_methods = len(methods)
+    fig, ax   = plt.subplots(figsize=(3 + n_methods * 1.6, 6))
 
-    fig, ax = plt.subplots(figsize=(max(6, len(methods) * 1.8), 5))
-    bars = ax.bar(methods, dtw_vals, color=colors, edgecolor='white', linewidth=1.5)
-    for bar, val in zip(bars, dtw_vals):
-        if not np.isnan(val):
-            ax.text(bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + max(v for v in dtw_vals if not np.isnan(v)) * 0.012,
-                    f'{val:.3f}{unit}', ha='center', va='bottom',
-                    fontsize=10, fontweight='bold')
-    ax.set_ylabel(f'DTW distance vs baseline  [{unit}]  ( meglio)', fontsize=11)
+    # --- Box plot Human demos ---
+    if human_demos_dtw:
+        bp = ax.boxplot(
+            [human_demos_dtw],
+            positions=[0],
+            widths=0.45,
+            patch_artist=True,
+            boxprops=dict(facecolor=PALETTE.get('Human demos', '#e74c3c'),
+                          alpha=0.25, linewidth=1.5,
+                          edgecolor=PALETTE.get('Human demos', '#e74c3c')),
+            medianprops=dict(color=PALETTE.get('Human demos', '#e74c3c'),
+                             linewidth=2.5),
+            whiskerprops=dict(color=PALETTE.get('Human demos', '#e74c3c'),
+                              linewidth=1.5, linestyle='--'),
+            capprops=dict(color=PALETTE.get('Human demos', '#e74c3c'),
+                          linewidth=1.5),
+            flierprops=dict(marker='o', markerfacecolor='none',
+                            markeredgecolor=PALETTE.get('Human demos', '#e74c3c'),
+                            markersize=4, alpha=0.5),
+            showfliers=True,
+        )
+        # Jitter scatter per tutti i punti
+        random.seed(42)
+        jitter = [random.uniform(-0.15, 0.15) for _ in human_demos_dtw]
+        ax.scatter(jitter, human_demos_dtw,
+                   color=PALETTE.get('Human demos', '#e74c3c'),
+                   alpha=0.30, s=18, zorder=3)
+        # Media
+        mean_val = float(np.mean(human_demos_dtw))
+        ax.scatter([0], [mean_val],
+                   color=PALETTE.get('Human demos', '#e74c3c'),
+                   marker='D', s=55, zorder=5)
+        ax.annotate(f'{mean_val:.2f}m', xy=(0, mean_val),
+                    xytext=(10, 0), textcoords='offset points',
+                    ha='left', va='center', fontsize=8,
+                    color=PALETTE.get('Human demos', '#e74c3c'),
+                    fontweight='bold')
+
+    # --- Marker singoli per metodi appresi ---
+    for i, method in enumerate(methods, start=1):
+        val   = results[method]['cart_dtw']
+        color = PALETTE.get(method, '#95a5a6')
+        ax.scatter([i], [val],
+                   color=color, marker='D', s=120, zorder=5, clip_on=False)
+        ax.annotate(f'{val:.2f}m', xy=(i, val),
+                    xytext=(10, 0), textcoords='offset points',
+                    ha='left', va='center', fontsize=9,
+                    color=color, fontweight='bold')
+
+    # --- Asse x ---
+    x_labels = (['Human demos\n(N=55, box+scatter)'] if human_demos_dtw else []) + methods
+    x_pos    = list(range(len(x_labels)))
+    ax.set_xticks(x_pos if human_demos_dtw else list(range(1, n_methods + 1)))
+    ax.set_xticklabels(x_labels, fontsize=10)
+
+    # --- Linea orizzontale alla mediana delle demo (riferimento visivo) ---
+    if human_demos_dtw:
+        med = float(np.median(human_demos_dtw))
+        ax.axhline(med, color=PALETTE.get('Human demos', '#e74c3c'),
+                   linewidth=1.0, linestyle=':', alpha=0.5,
+                   label=f'Human demos median ({med:.2f}m)')
+
+    ax.set_ylabel('DTW cartesiano vs baseline  (m)  (lower=better)', fontsize=11)
     ax.set_title(
-        f'Degradation Chain  Exercise {exercise_num:03d} [{modality}]\n'
-        f'DTW cartesiana  invariante alla ridondanza cinematica\n'
-        'Expected: MLP / GRU / Transformer  Canonical < Human demos',
-        fontsize=11, fontweight='bold')
-    ax.set_ylim(0, max(v for v in dtw_vals if not np.isnan(v)) * 1.25)
+        f'Degradation Chain -- Exercise {exercise_num:03d} [{modality}]\n'
+        'DTW cartesiana (m) -- box = distribuzione Human demos',
+        fontsize=12, fontweight='bold')
+    ax.set_xlim(-0.6, (n_methods + 0.6) if human_demos_dtw else (n_methods - 0.4 + 0.6))
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(axis='y', alpha=0.3)
@@ -464,43 +521,47 @@ def plot_cartesian_pearson(results: Dict, output_dir: Path,
 
 
 def plot_cartesian_trajectories(trajs, output_dir, title_suffix='', active_side='both'):
-    """Wrist Cartesian trajectories per il braccio attivo."""
+    """Wrist e Elbow Cartesian trajectories per il braccio attivo (3x2 grid)."""
     from evaluation_and_comparison._metrics import _to_cartesian
 
     AXIS_LABELS = ['X (forward, m)', 'Y (lateral, m)', 'Z (up, m)']
-    sides = (['right'] if active_side == 'right'
-             else ['left'] if active_side == 'left'
-             else ['right', 'left'])
-    side_titles = {'right': 'Right wrist', 'left': 'Left wrist'}
 
+    # Seleziona il braccio attivo
+    side = ('right' if active_side == 'right'
+            else 'left' if active_side == 'left'
+            else 'left')   # default: left
+
+    # Colonne: wrist (0) e elbow (1)
+    col_titles = [f'{side.capitalize()} wrist', f'{side.capitalize()} elbow']
+
+    # Calcola FK per ogni traiettoria
     cart = {}
     for label, traj in trajs.items():
         if traj is None:
             continue
-        rw, _, lw, _ = _to_cartesian(traj)
-        cart[label] = {'right': rw, 'left': lw}
+        rw, re, lw, le = _to_cartesian(traj)
+        wrist = rw if side == 'right' else lw
+        elbow = re if side == 'right' else le
+        cart[label] = {'wrist': wrist, 'elbow': elbow}
     if not cart:
         return
 
-    n_cols = len(sides)
-    fig, axes = plt.subplots(3, n_cols, figsize=(7 * n_cols, 10), sharex=False)
-    if n_cols == 1:
-        axes = axes.reshape(3, 1)
-    fig.suptitle(f'Wrist Cartesian Trajectories{title_suffix}', fontsize=13, fontweight='bold')
-    for col_i, side_key in enumerate(sides):
-        axes[0, col_i].set_title(side_titles[side_key], fontsize=11, fontweight='bold')
+    fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=False)
+    fig.suptitle(f'Cartesian Trajectories — {side.capitalize()} arm{title_suffix}',
+                 fontsize=13, fontweight='bold')
 
-    ls_map = {'Baseline': '-', 'Canonical': '--'}
-    for ax_i in range(3):
-        for col_i, side_key in enumerate(sides):
+    for col_i, endpoint in enumerate(['wrist', 'elbow']):
+        axes[0, col_i].set_title(col_titles[col_i], fontsize=11, fontweight='bold')
+        for ax_i in range(3):
             ax = axes[ax_i, col_i]
             for label, data in cart.items():
-                t = data[side_key]
+                t = data[endpoint]
                 ax.plot(t[:, ax_i],
                         color=PALETTE.get(label, '#7f8c8d'),
                         linewidth=2.5 if label == 'Baseline' else 1.5,
-                        linestyle=ls_map.get(label, '-'),
-                        label=label, alpha=1.0 if label == 'Baseline' else 0.8)
+                        linestyle='--' if label == 'Canonical' else '-',
+                        label=label,
+                        alpha=1.0 if label == 'Baseline' else 0.8)
             if col_i == 0:
                 ax.set_ylabel(AXIS_LABELS[ax_i], fontsize=9)
             if ax_i == 2:
@@ -508,7 +569,7 @@ def plot_cartesian_trajectories(trajs, output_dir, title_suffix='', active_side=
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             ax.grid(alpha=0.3)
-            if ax_i == 0 and col_i == n_cols - 1:
+            if ax_i == 0 and col_i == 1:
                 ax.legend(fontsize=8, loc='best')
 
     fig.tight_layout()
@@ -622,6 +683,142 @@ def plot_cartesian_velocity(trajs, output_dir, baseline=None):
         print(f'  Saved -> {p.name}')
 
 
+def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
+                          output_dir: Path,
+                          active_side: str = 'left') -> None:
+    '''
+    Salva un file HTML interattivo con 5 subplot 3D (uno per metodo).
+    Ogni subplot mostra polso (linea continua) e gomito (linea tratteggiata)
+    del braccio attivo. Aprire nel browser per ruotare/zoomare.
+    Output: exercise_XXX/n_XX/evaluation/plot_3d_trajectories.html
+    '''
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        print("  [skip] plot_3d_trajectories: plotly non installato. "
+              "Installare con: pip install plotly")
+        return
+
+    from evaluation_and_comparison._metrics import _to_cartesian
+
+    ORDER = ['Baseline', 'Canonical', 'MLP', 'GRU', 'Transformer']
+    items = [(lbl, trajs[lbl]) for lbl in ORDER
+             if lbl in trajs and trajs[lbl] is not None]
+    if not items:
+        return
+
+    # Calcola FK per ogni metodo
+    cart_data = {}
+    for label, traj in items:
+        rw, re, lw, le = _to_cartesian(traj)
+        wrist = rw if active_side == 'right' else lw
+        elbow = re if active_side == 'right' else le
+        cart_data[label] = {'wrist': wrist, 'elbow': elbow}
+
+    # Assi globali consistenti tra i subplot
+    all_pts = np.vstack([v for d in cart_data.values() for v in d.values()])
+    pad = 0.05
+    axis_range = {
+        'x': [all_pts[:, 0].min() - pad, all_pts[:, 0].max() + pad],
+        'y': [all_pts[:, 1].min() - pad, all_pts[:, 1].max() + pad],
+        'z': [all_pts[:, 2].min() - pad, all_pts[:, 2].max() + pad],
+    }
+
+    n    = len(items)
+    specs = [[{'type': 'scene'}] * n]
+    col_titles = [lbl for lbl, _ in items]
+
+    fig = make_subplots(
+        rows=1, cols=n,
+        specs=specs,
+        subplot_titles=col_titles,
+        horizontal_spacing=0.02,
+    )
+
+    axis_style = dict(
+        showgrid=True,
+        gridcolor='lightgrey',
+        gridwidth=1,
+        showbackground=True,
+        backgroundcolor='rgb(245,245,245)',
+        showline=True,
+        linecolor='grey',
+        zeroline=True,
+        zerolinecolor='grey',
+    )
+
+    scene_cfg = dict(
+        xaxis=dict(title='X (m)', range=axis_range['x'], **axis_style),
+        yaxis=dict(title='Y (m)', range=axis_range['y'], **axis_style),
+        zaxis=dict(title='Z (m)', range=axis_range['z'], **axis_style),
+        aspectmode='cube',
+    )
+
+    for col_i, (label, _) in enumerate(items):
+        scene_n  = 'scene' if col_i == 0 else f'scene{col_i + 1}'
+        color    = PALETTE.get(label, '#7f8c8d')
+        data     = cart_data[label]
+        show_leg = (col_i == 0)
+
+        for endpoint, dash, opacity, name in [
+            ('wrist', 'solid', 0.95, 'wrist'),
+            ('elbow', 'dash',  0.65, 'elbow'),
+        ]:
+            pts = data[endpoint]
+            # Frame indices per tooltip
+            hover = [f'frame {i}<br>x={pts[i,0]:.3f} y={pts[i,1]:.3f} z={pts[i,2]:.3f}'
+                     for i in range(len(pts))]
+
+            fig.add_trace(go.Scatter3d(
+                x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
+                mode='lines',
+                line=dict(color=color, width=4 if dash == 'solid' else 2,
+                          dash=dash),
+                opacity=opacity,
+                name=name,
+                legendgroup=name,
+                showlegend=show_leg,
+                hovertemplate='%{text}<extra>' + name + '</extra>',
+                text=hover,
+                scene=scene_n,
+            ), row=1, col=col_i + 1)
+
+            # Markers inizio e fine
+            for pt, sym in [(pts[0], 'circle'), (pts[-1], 'square')]:
+                fig.add_trace(go.Scatter3d(
+                    x=[pt[0]], y=[pt[1]], z=[pt[2]],
+                    mode='markers',
+                    marker=dict(size=5, color=color, symbol=sym,
+                                opacity=0.9 if dash == 'solid' else 0.5),
+                    showlegend=False,
+                    hoverinfo='skip',
+                    scene=scene_n,
+                ), row=1, col=col_i + 1)
+
+        fig.update_layout(**{scene_n: scene_cfg})
+
+    side_label = active_side.capitalize()
+    fig.update_layout(
+        title=dict(
+            text=f'3D Trajectories -- {side_label} arm   '
+                 f'[wrist (solid) / elbow (dashed)]',
+            font=dict(size=14),
+            x=0.5,
+        ),
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.7)'),
+        height=550,
+        margin=dict(l=10, r=10, t=80, b=10),
+        paper_bgcolor='white',
+        font=dict(family='Arial', size=11),
+    )
+
+    p = output_dir / 'plot_3d_trajectories.html'
+    fig.write_html(str(p), include_plotlyjs='cdn')
+    print(f'  Saved -> {p.name}  (open in browser)')
+
+
+
 def plot_summary_heatmap(results: Dict, output_dir: Path,
                           title_suffix: str = '',
                           active_side: str = 'both') -> None:
@@ -636,11 +833,11 @@ def plot_summary_heatmap(results: Dict, output_dir: Path,
     elbow_lbl = 'RMSE\nLe (m)'     if s == 'left'  else ('RMSE\nRe (m)'      if s == 'right' else 'RMSE\nRe (m)')
 
     METRICS = [
-        ('cart_dtw_norm', 'DTW\n(m/frame)', True,  '{:.4f}'),
-        (wrist_key,       wrist_lbl,        True,  '{:.4f}'),
-        (elbow_key,       elbow_lbl,        True,  '{:.4f}'),
+        ('cart_dtw',  'DTW\n(m)',       True,  '{:.2f}'),
+        (wrist_key,    wrist_lbl,        True,  '{:.4f}'),
+        (elbow_key,    elbow_lbl,        True,  '{:.4f}'),
+        ('rmse_mean', 'RMSE\n(joint)',   True,  '{:.2f}'),
         ('cart_pearson_mean', 'Pearson\ncart', False, '{:.3f}'),
-        ('rmse_mean',     'RMSE\n(joint)',   True,  '{:.2f}'),
         ('pearson_mean',  'Pearson\njoint',  False, '{:.3f}'),
     ]
 

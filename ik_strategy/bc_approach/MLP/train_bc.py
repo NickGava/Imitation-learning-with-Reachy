@@ -44,6 +44,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 
 from utilities.config import DATA_ROOT, JOINT_COLS
+from utilities.split_utils import split_name
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -193,11 +194,12 @@ def _save_loss_curve(all_train, all_val, path: Path):
 def main():
     parser = argparse.ArgumentParser(description='Train BC MLP (k-fold) for one exercise.')
     parser.add_argument('exercise', type=int, help='Exercise number (e.g. 1)')
+    parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
     args = parser.parse_args()
 
-    exercise_name = f'exercise_{args.exercise:03d}'
-    dataset_path  = DATA_ROOT / 'dataset' / exercise_name / 'bc_dataset.csv'
-    output_dir    = DATA_ROOT / 'dataset' / exercise_name / 'MLP'
+    split_dir    = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}' / split_name(args.n_demos)
+    dataset_path = split_dir / 'bc_dataset.csv'
+    output_dir    = split_dir / 'MLP'   # o GRU / Transformer
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'Loading {dataset_path} ...')

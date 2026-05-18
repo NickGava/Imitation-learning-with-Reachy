@@ -38,6 +38,8 @@ import torch
 import torch.nn as nn
 
 from utilities.config import DATA_ROOT, JOINT_COLS
+from utilities.split_utils import split_name
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -453,14 +455,16 @@ def main():
                         metavar='N',
                         help=f'Consecutive frames below threshold before stopping '
                              f'(default: {STOP_WINDOW}).')
+    parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
     args = parser.parse_args()
 
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}'
-    model_dir    = exercise_dir / 'MLP'
-    plot_path    = exercise_dir / 'plots' / 'bc_MLP.png'
+    split_dir    = exercise_dir / split_name(args.n_demos)
+    model_dir    = split_dir / 'MLP'           # o GRU / Transformer
+    plot_path    = split_dir / 'plots' / 'bc_MLP.png'
 
     ensemble   = load_ensemble(model_dir)
-    start_pose = _load_start_pose(exercise_dir)
+    start_pose = _load_start_pose(split_dir)
 
     # if args.steps is not None:
     #     n_steps = args.steps
@@ -495,7 +499,7 @@ def main():
         all_fk.append((r_fk, l_fk))
 
         if run == 1:
-            joints_path = exercise_dir / 'plots_joints' / 'joints_MLP.png'
+            joints_path = split_dir / 'plots_joints' / 'joints_MLP.png'
             plot_joints_trajectory(q_traj, args.exercise, joints_path)
             traj_path = model_dir / 'bc_trajectory.csv'
             pd.DataFrame(q_traj, columns=JOINT_COLS).to_csv(traj_path, index=False)
