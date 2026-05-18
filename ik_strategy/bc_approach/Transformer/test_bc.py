@@ -563,6 +563,9 @@ def main():
         if run == 1:
             joints_path = exercise_dir / 'plots_joints' / 'joints_Transformer.png'
             plot_joints_trajectory(q_traj, args.exercise, joints_path)
+            traj_path = model_dir / 'bc_trajectory.csv'
+            pd.DataFrame(q_traj, columns=JOINT_COLS).to_csv(traj_path, index=False)
+            print(f'Trajectory saved → {traj_path}')
 
         if reachy is not None and not closed_loop:
             _goto_pose(reachy, start_pose, GOTO_DURATION)
