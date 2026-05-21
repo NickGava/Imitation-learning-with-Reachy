@@ -77,14 +77,26 @@ def load_bc_trajectory(dataset_dir: Path, arch: str) -> Optional[np.ndarray]:
     return _load_joint_csv(path, label=arch)
 
 
-def load_human_demos(landmarks_root: Path, exercise_num: int) -> List[np.ndarray]:
+def load_human_demos(landmarks_root: Path,
+                      exercise_num: int,
+                      n_demos: int = 55) -> List[np.ndarray]:
     '''
-    Carica tutti i joint_ik.csv delle demo umane per un dato esercizio.
-    Scansiona landmarks/subject_*/exercise_NNN/video_*/joint_ik.csv.
+    Carica i joint_ik.csv delle demo umane per un dato esercizio,
+    limitandosi ai primi K soggetti (stessi usati per il training dello split).
+
+    n_demos : 10 -> 2 soggetti, 25 -> 5, 55 -> tutti 11
     '''
+    from utilities.split_utils import select_subjects
+
     exercise_name = f'exercise_{exercise_num:03d}'
+    all_subj_dirs = sorted(landmarks_root.glob('subject_*'))
+    selected      = select_subjects(all_subj_dirs, n_demos)
+    selected_set  = {d.name for d in selected}
+
     demos = []
     for subj_dir in sorted(landmarks_root.glob('subject_*')):
+        if subj_dir.name not in selected_set:
+            continue
         exer_dir = subj_dir / exercise_name
         if not exer_dir.is_dir():
             continue
@@ -92,7 +104,8 @@ def load_human_demos(landmarks_root: Path, exercise_num: int) -> List[np.ndarray
             arr = _load_joint_csv(video_dir / 'joint_ik.csv')
             if arr is not None and len(arr) >= 2:
                 demos.append(arr)
-    print(f'  Human demos trovate: {len(demos)}')
+    print(f'  Human demos caricate: {len(demos)} '
+          f'({len(selected)} soggetti, split n_{n_demos:02d})')
     return demos
 
 
@@ -116,24 +129,37 @@ def save_results_csv(results: Dict, output_dir: Path) -> None:
     '''
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    CART_SCALAR_KEYS = [
-        'cart_dtw', 'cart_dtw_norm',
+    ALL_CART_SCALAR_KEYS = [
+        'cart_dtw',
         'cart_rmse_r_wrist', 'cart_rmse_l_wrist',
         'cart_rmse_r_elbow', 'cart_rmse_l_elbow',
         'cart_peak_r_wrist', 'cart_peak_l_wrist',
         'cart_pearson_mean', 'cart_smoothness',
     ]
+    # Salva solo le chiavi con almeno un valore non-NaN tra i metodi
+    import math
+    CART_SCALAR_KEYS = [
+        k for k in ALL_CART_SCALAR_KEYS
+        if any(not math.isnan(r.get(k, float('nan'))) for r in results.values())
+    ]
 
     # --- results_summary.csv ------------------------------------------------
     summary = []
     for m, r in results.items():
+        rw = r.get('cart_rmse_r_wrist', float('nan'))
+        lw = r.get('cart_rmse_l_wrist', float('nan'))
+        re = r.get('cart_rmse_r_elbow', float('nan'))
+        le = r.get('cart_rmse_l_elbow', float('nan'))
         row = {
-            'method'         : m,
-            'dtw_distance'   : r.get('dtw_distance',    float('nan')),
-            'rmse_mean_deg'  : r.get('rmse_mean',       float('nan')),
-            'peak_error_mean': r.get('peak_error_mean', float('nan')),
-            'pearson_mean'   : r.get('pearson_mean',    float('nan')),
-            'smoothness'     : r.get('smoothness',      float('nan')),
+            'method'           : m,
+            'dtw_distance'     : r.get('dtw_distance',     float('nan')),
+            'rmse_mean_deg'    : r.get('rmse_mean',        float('nan')),
+            'peak_error_mean'  : r.get('peak_error_mean',  float('nan')),
+            'pearson_mean'     : r.get('pearson_mean',     float('nan')),
+            'smoothness'       : r.get('smoothness',       float('nan')),
+            # cart metriche braccio attivo (combinato)
+            'cart_rmse_wrist'  : lw if not math.isnan(lw) else rw,
+            'cart_rmse_elbow'  : le if not math.isnan(le) else re,
         }
         for k in CART_SCALAR_KEYS:
             row[k] = r.get(k, float('nan'))

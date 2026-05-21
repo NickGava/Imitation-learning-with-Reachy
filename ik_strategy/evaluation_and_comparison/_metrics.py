@@ -135,93 +135,96 @@ def compute_metrics(generated: np.ndarray,
 
 def compute_cartesian_metrics(generated: np.ndarray,
                                reference: np.ndarray,
+                               active_side: str = 'both',
                                label: str = '') -> Dict:
     '''
-    Calcola le metriche nello spazio cartesiano (polso e gomito in metri).
+    Calcola le metriche nello spazio cartesiano solo per il braccio attivo.
 
-    Applica FK a entrambe le traiettorie, poi valuta su:
-      - DTW sul vettore combinato [r_wrist, r_elbow, l_wrist, l_elbow] (12D, metri)
-      - RMSE per endpoint (r_wrist, l_wrist, r_elbow, l_elbow)
-      - Peak error per polso (distanza massima dal riferimento)
-      - Pearson per coordinata XYZ del polso (dx, dy, dz, sx, sy, sz)
-      - Smoothness sulla traiettoria cartesiana del polso
-
-    Queste metriche sono INVARIANTI alla ridondanza cinematica:
-    due traiettorie fisicamente identiche producono gli stessi valori
-    indipendentemente dai joint usati.
-
-    Parametri
-    ----------
-    generated : (T, 16) array in gradi
-    reference : (T_ref, 16) array in gradi
-
-    Ritorna
-    -------
-    dict con: cart_dtw, cart_rmse_{r,l}_{wrist,elbow},
-              cart_peak_{r,l}_wrist, cart_pearson_{r,l}w,
-              cart_smoothness
+    active_side : 'left' | 'right' | 'both'
+        Determina quale braccio considerare. Le metriche del braccio inattivo
+        non vengono calcolate (NaN). Il DTW usa solo il braccio attivo (6D).
     '''
+    nan = float('nan')
+
+    def _rmse3d(a, b):
+        return float(np.sqrt(np.mean(np.sum((a - b) ** 2, axis=1))))
+
     # FK
     r_wrist_g, r_elbow_g, l_wrist_g, l_elbow_g = _to_cartesian(generated)
     r_wrist_r, r_elbow_r, l_wrist_r, l_elbow_r = _to_cartesian(reference)
 
-    # Vettore 12D per DTW: [r_wrist, r_elbow, l_wrist, l_elbow]
-    traj_g = np.hstack([r_wrist_g, r_elbow_g, l_wrist_g, l_elbow_g])
-    traj_r = np.hstack([r_wrist_r, r_elbow_r, l_wrist_r, l_elbow_r])
+    # DTW solo sul braccio attivo (6D: wrist + elbow)
+    if active_side == 'left':
+        traj_g = np.hstack([l_wrist_g, l_elbow_g])
+        traj_r = np.hstack([l_wrist_r, l_elbow_r])
+    elif active_side == 'right':
+        traj_g = np.hstack([r_wrist_g, r_elbow_g])
+        traj_r = np.hstack([r_wrist_r, r_elbow_r])
+    else:
+        traj_g = np.hstack([r_wrist_g, r_elbow_g, l_wrist_g, l_elbow_g])
+        traj_r = np.hstack([r_wrist_r, r_elbow_r, l_wrist_r, l_elbow_r])
 
     path, dtw_dist = dtw_path(traj_g, traj_r)
-    path_len = len(path)
-    dtw_norm = float(dtw_dist) / path_len   # media per frame in metri (interpretabile)
     idx_g = [p[0] for p in path]
     idx_r = [p[1] for p in path]
 
-    # Endpoint allineati
-    rw_g, re_g = r_wrist_g[idx_g], r_elbow_g[idx_g]
-    lw_g, le_g = l_wrist_g[idx_g], l_elbow_g[idx_g]
-    rw_r, re_r = r_wrist_r[idx_r], r_elbow_r[idx_r]
-    lw_r, le_r = l_wrist_r[idx_r], l_elbow_r[idx_r]
-
-    # RMSE per endpoint (distanza euclidea 3D media, in metri)
-    def _rmse3d(a, b):
-        return float(np.sqrt(np.mean(np.sum((a - b) ** 2, axis=1))))
-
-    rmse_r_wrist = _rmse3d(rw_g, rw_r)
-    rmse_l_wrist = _rmse3d(lw_g, lw_r)
-    rmse_r_elbow = _rmse3d(re_g, re_r)
-    rmse_l_elbow = _rmse3d(le_g, le_r)
-
-    # Peak error: distanza massima del polso dalla reference (DTW-aligned)
-    peak_r = float(np.max(np.linalg.norm(rw_g - rw_r, axis=1)))
-    peak_l = float(np.max(np.linalg.norm(lw_g - lw_r, axis=1)))
-
-    # Pearson per coordinata XYZ del polso
-    pearson_rw = np.array([
-        _safe_pearsonr(rw_g[:, c], rw_r[:, c]) for c in range(3)
-    ])
-    pearson_lw = np.array([
-        _safe_pearsonr(lw_g[:, c], lw_r[:, c]) for c in range(3)
-    ])
-    pearson_rw = np.nan_to_num(pearson_rw, nan=0.0)
-    pearson_lw = np.nan_to_num(pearson_lw, nan=0.0)
-    pearson_mean = float(np.mean(np.concatenate([pearson_rw, pearson_lw])))
-
-    # Smoothness sulla traiettoria cartesiana combinata dei polsi
-    wrist_cart = np.hstack([r_wrist_g, l_wrist_g])
-    if len(wrist_cart) > 2:
-        jerk             = np.diff(wrist_cart, n=2, axis=0)
-        cart_smoothness  = float(-np.mean(jerk ** 2))
+    # Metriche braccio destro
+    if active_side in ('right', 'both'):
+        rw_g, re_g = r_wrist_g[idx_g], r_elbow_g[idx_g]
+        rw_r, re_r = r_wrist_r[idx_r], r_elbow_r[idx_r]
+        rmse_r_wrist = _rmse3d(rw_g, rw_r)
+        rmse_r_elbow = _rmse3d(re_g, re_r)
+        peak_r       = float(np.max(np.linalg.norm(rw_g - rw_r, axis=1)))
+        pearson_rw   = np.array([_safe_pearsonr(rw_g[:, c], rw_r[:, c]) for c in range(3)])
+        pearson_rw   = np.nan_to_num(pearson_rw, nan=0.0)
+        smooth_r     = r_wrist_g
     else:
-        cart_smoothness  = float('nan')
+        rmse_r_wrist = nan; rmse_r_elbow = nan; peak_r = nan
+        pearson_rw   = np.full(3, nan)
+        smooth_r     = None
+
+    # Metriche braccio sinistro
+    if active_side in ('left', 'both'):
+        lw_g, le_g = l_wrist_g[idx_g], l_elbow_g[idx_g]
+        lw_r, le_r = l_wrist_r[idx_r], l_elbow_r[idx_r]
+        rmse_l_wrist = _rmse3d(lw_g, lw_r)
+        rmse_l_elbow = _rmse3d(le_g, le_r)
+        peak_l       = float(np.max(np.linalg.norm(lw_g - lw_r, axis=1)))
+        pearson_lw   = np.array([_safe_pearsonr(lw_g[:, c], lw_r[:, c]) for c in range(3)])
+        pearson_lw   = np.nan_to_num(pearson_lw, nan=0.0)
+        smooth_l     = l_wrist_g
+    else:
+        rmse_l_wrist = nan; rmse_l_elbow = nan; peak_l = nan
+        pearson_lw   = np.full(3, nan)
+        smooth_l     = None
+
+    # Pearson mean solo sul braccio attivo
+    if active_side == 'left':
+        pearson_mean = float(np.nanmean(pearson_lw))
+    elif active_side == 'right':
+        pearson_mean = float(np.nanmean(pearson_rw))
+    else:
+        pearson_mean = float(np.nanmean(np.concatenate([pearson_rw, pearson_lw])))
+
+    # Smoothness solo sul braccio attivo
+    wrist_active = (smooth_l if active_side == 'left'
+                    else smooth_r if active_side == 'right'
+                    else np.hstack([r_wrist_g, l_wrist_g]))
+    if wrist_active is not None and len(wrist_active) > 2:
+        jerk            = np.diff(wrist_active, n=2, axis=0)
+        cart_smoothness = float(-np.mean(jerk ** 2))
+    else:
+        cart_smoothness = nan
 
     if label:
+        wrist_rmse = rmse_l_wrist if active_side == 'left' else rmse_r_wrist
         print(f'  [{label:<16}]  '
-              f'DTW={dtw_norm:.4f}m/frame  '
-              f'RMSE R_wrist={rmse_r_wrist:.4f}m  L_wrist={rmse_l_wrist:.4f}m  '
-              f'r={pearson_mean:.3f}')
+              f'DTW_cart={dtw_dist:.2f}m  '
+              f'RMSE_wrist={wrist_rmse:.4f}m  '
+              f'Pearson={pearson_mean:.3f}')
 
     return {
-        'cart_dtw'         : float(dtw_dist),    # somma totale (non usare per plot)
-        'cart_dtw_norm'    : dtw_norm,            # media per frame in metri ← usare questa
+        'cart_dtw'         : float(dtw_dist),
         'cart_rmse_r_wrist': rmse_r_wrist,
         'cart_rmse_l_wrist': rmse_l_wrist,
         'cart_rmse_r_elbow': rmse_r_elbow,
@@ -247,7 +250,7 @@ def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
     scalar_keys = [
         'dtw_distance', 'rmse_mean', 'peak_error_mean',
         'pearson_mean', 'smoothness',
-        'cart_dtw', 'cart_dtw_norm',
+        'cart_dtw',
         'cart_rmse_r_wrist', 'cart_rmse_l_wrist',
         'cart_rmse_r_elbow', 'cart_rmse_l_elbow',
         'cart_peak_r_wrist', 'cart_peak_l_wrist',

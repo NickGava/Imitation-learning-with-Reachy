@@ -42,33 +42,33 @@ def _run_exercise(ex: int, runs: int, steps,
     if steps is not None:
         test_args += ['--steps', steps]
 
-    # print(f'\n{"#"*60}')
-    # print(f'# build_dataset — exercise {ex:03d}  split n_{n_demos:02d}')
-    # print(f'{"#"*60}')
-    # if not _run('bc_approach.build_dataset', [ex, '--n-demos', n_demos]):
-    #     print(f'  [ERROR] build_dataset failed for exercise {ex:03d} — skipping.')
-    #     return False
+    print(f'\n{"#"*60}')
+    print(f'# build_dataset — exercise {ex:03d}  split n_{n_demos:02d}')
+    print(f'{"#"*60}')
+    if not _run('bc_approach.build_dataset', [ex, '--n-demos', n_demos]):
+        print(f'  [ERROR] build_dataset failed for exercise {ex:03d} — skipping.')
+        return False
 
     if run_mlp:
-        # print(f'\n{"#"*60}\n# MLP — TRAIN\n{"#"*60}')
-        # if not _run('bc_approach.MLP.train_bc', [ex, '--n-demos', n_demos]):
-        #     return False
+        print(f'\n{"#"*60}\n# MLP — TRAIN\n{"#"*60}')
+        if not _run('bc_approach.MLP.train_bc', [ex, '--n-demos', n_demos]):
+            return False
         print(f'\n{"#"*60}\n# MLP — TEST\n{"#"*60}')
         if not _run('bc_approach.MLP.test_bc', test_args):
             return False
 
     if run_gru:
-        # print(f'\n{"#"*60}\n# GRU — TRAIN\n{"#"*60}')
-        # if not _run('bc_approach.GRU.train_bc', [ex, '--n-demos', n_demos]):
-        #     return False
+        print(f'\n{"#"*60}\n# GRU — TRAIN\n{"#"*60}')
+        if not _run('bc_approach.GRU.train_bc', [ex, '--n-demos', n_demos]):
+            return False
         print(f'\n{"#"*60}\n# GRU — TEST\n{"#"*60}')
         if not _run('bc_approach.GRU.test_bc', test_args):
             return False
 
     if run_transformer:
-        # print(f'\n{"#"*60}\n# TRANSFORMER — TRAIN\n{"#"*60}')
-        # if not _run('bc_approach.Transformer.train_bc', [ex, '--n-demos', n_demos]):
-        #     return False
+        print(f'\n{"#"*60}\n# TRANSFORMER — TRAIN\n{"#"*60}')
+        if not _run('bc_approach.Transformer.train_bc', [ex, '--n-demos', n_demos]):
+            return False
         print(f'\n{"#"*60}\n# TRANSFORMER — TEST\n{"#"*60}')
         if not _run('bc_approach.Transformer.test_bc', test_args):
             return False

@@ -4,6 +4,7 @@ TODO: docstring
 # __________ Imports __________
 import csv
 import cv2
+import math
 import mediapipe as mp
 import numpy as np
 
@@ -19,10 +20,12 @@ from stereo_config import (
 
 # __________ Tunable variables __________
 DISPLAY_WIDTH = 400
-Z_CONF_THRESHOLD = 0.8        # confidence threshold for z stereo
-MAX_Z_DELTA_M = 0.15            # Threshold for spikes of z stereo
-MAX_PERSISTENCE_FRAMES = 35     # Threshold for old values of z stereo
-BODY_Z_MAX = 1.2                # Threshold for body center z coordinate
+Z_CONF_THRESHOLD = 0.2        # confidence threshold for z stereo
+MAX_Z_DELTA_M = 0.05          # Threshold for spikes of z stereo
+MAX_PERSISTENCE_FRAMES = 25   # Threshold for old values of z stereo
+BODY_Z_MAX = 1.2              # Threshold for body center z coordinate
+OEF_MIN_CUTOFF = 1.0          # One Euro Filter: base cutoff frequency (Hz) — lower = smoother
+OEF_BETA = 0.1                # One Euro Filter: speed coefficient — higher = less lag on fast motion
 
 Z_MIN = 0.1   # m - minimo atteso
 Z_MAX = 1.8   # m - massimo atteso (taglia lo sfondo lontano)
@@ -31,6 +34,49 @@ Z_MAX = 1.8   # m - massimo atteso (taglia lo sfondo lontano)
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
+
+
+# -------------------------------------------------------
+# One Euro Filter (applied to stereo z of elbow/wrist)
+# -------------------------------------------------------
+class _OneEuroFilter:
+    """
+    Adaptive low-pass filter that reduces lag on fast motion.
+    Reference: Casiez et al., "1€ Filter: A Simple Speed-based Low-pass Filter", CHI 2012.
+    """
+    def __init__(self, min_cutoff=1.0, beta=0.0, d_cutoff=1.0):
+        self.min_cutoff = min_cutoff
+        self.beta       = beta
+        self.d_cutoff   = d_cutoff
+        self._x_prev    = None
+        self._dx_prev   = 0.0
+        self._t_prev    = None
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def __call__(self, x, t):
+        if self._t_prev is None:            # primo campione: inizializza e restituisci invariato
+            self._x_prev = x
+            self._t_prev = t
+            return x
+        dt = t - self._t_prev
+        if dt <= 0:
+            return self._x_prev
+        # Stima derivata e filtraggio adattivo
+        dx      = (x - self._x_prev) / dt
+        a_d     = self._alpha(self.d_cutoff, dt)
+        dx_hat  = a_d * dx + (1.0 - a_d) * self._dx_prev
+        cutoff  = self.min_cutoff + self.beta * abs(dx_hat)
+        a       = self._alpha(cutoff, dt)
+        x_hat   = a * x + (1.0 - a) * self._x_prev
+        # Aggiorno stato
+        self._x_prev  = x_hat
+        self._dx_prev = dx_hat
+        self._t_prev  = t
+        return x_hat
 
 
 # -------------------------------------------------------
@@ -47,7 +93,7 @@ def _build_rectification_map(img_size):
     R1, R2, P_L, P_R, Q, _, _ = cv2.stereoRectify(
         LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, img_size,
         R, T, flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=0.4
+        alpha=1
     )
     map_L1, map_L2 = cv2.initUndistortRectifyMap(LEFT_K, LEFT_D, R1, P_L, img_size, cv2.CV_32FC1)
     map_R1, map_R2 = cv2.initUndistortRectifyMap(RIGHT_K, RIGHT_D, R2, P_R, img_size, cv2.CV_32FC1)
@@ -81,7 +127,7 @@ def _disparity_to_depth_map(disp_L, P_L):
     disp = disp_L.astype(np.float32) / 16.0
     disp[disp <= 0] = np.nan
     fx = P_L[0, 0]
-    baseline = abs(T[0])
+    baseline = abs(T.ravel()[0])
     return fx * baseline / disp
 
 def _stereo_confidence(disp_L, disp_R, u, v, threshold=1.0):
@@ -151,7 +197,7 @@ def _draw_landmarks(image, results):
 # -------------------------------------------------------
 # Extract Pose Row
 # -------------------------------------------------------
-def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame_h, last_z_pose, last_z_age, disp_L, disp_R):
+def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame_h, last_z_pose, last_z_age, stereo_oef, disp_L, disp_R):
     """
     TODO: docstring 
     """
@@ -171,14 +217,14 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
         z_raw = None
 
         # _____ Calculate stereo confidence _____
-        u = lm.x * frame_w          # 0 < lm.x < 1
+        u = lm.x * frame_w          # pixel coordinate (x)
         v = lm.y * frame_h
         confidence = _stereo_confidence(disp_L, disp_R, u, v)
 
         # _____ Using (or not) z_stereo _____
         if confidence >= Z_CONF_THRESHOLD:      # Se la rilevazione è abbastanza affidabile usa la z stereo
             z_raw = depth_map[int(round(v)), int(round(u))]
-            if np.isnan(z_raw) or z_raw < 0.3 or z_raw > 4.0:
+            if np.isnan(z_raw) or z_raw < 0.1 or z_raw > 4.0:
                 z_raw = None
         z = _resolve_z(name, z_raw, last_z_pose, last_z_age, i_frame)
 
@@ -192,40 +238,29 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
 
 
     # __________ Get all landmarks of the frame __________
+    WRIST_NAMES = {'left_wrist', 'right_wrist', 'left_elbow', 'right_elbow'}
+
     for name, i in POSE_INDICES.items():
-        z_raw = None
         lm = lms.landmark[i]
         w_lm = w_lms.landmark[i]
 
-        # _____ Get coords for the joint _____
-        x = w_lm.x
-        y = w_lm.y
-        z = w_lm.z      # Fallback on MediaPipe
+        x   = w_lm.x
+        y   = w_lm.y
+        z   = w_lm.z    # default: pure MediaPipe for all landmarks
         vis = w_lm.visibility
 
-        if sh_z_stereo is not None:
-            # _____ Calculate stereo confidence _____
-            u = int(round(lm.x * frame_w))      # 0 < lm.x < 1
+        # _____ Stereo z only for elbow/wrist landmarks _____
+        if name in WRIST_NAMES and sh_z_stereo is not None:
+            u = int(round(lm.x * frame_w))
             v = int(round(lm.y * frame_h))
             confidence = _stereo_confidence(disp_L, disp_R, u, v)
-            
-            # _____ Using (or not) z_stereo _____
             if confidence >= Z_CONF_THRESHOLD:
                 z_raw = depth_map[v, u]
-                if np.isnan(z_raw) or z_raw < 0.1 or z_raw > 4.0:
-                    z_raw = None
-            z_stereo = _resolve_z(name, z_raw, last_z_pose, last_z_age, i_frame)
+                if not np.isnan(z_raw) and 0.1 <= z_raw <= 4.0:
+                    z_body = z_raw - sh_z_stereo
+                    if abs(z_body) <= BODY_Z_MAX:
+                        z = stereo_oef[name](z_body, timestamp)   # One Euro Filter
 
-            # _____ Save (or not) z_stereo in z _____
-            if z_stereo is not None:
-                # z_body = z*(1-confidence) + (z_stereo - sh_z_stereo)*confidence        # Mix approach 
-                z_body = z_stereo - sh_z_stereo                                      # Full stereo
-                if abs(z_body) <= BODY_Z_MAX:
-                    z = z_body
-                else:                                   # Tolgo i valori rivelatisi sbagliati dai dizionari
-                    last_z_pose.pop(name, None)
-                    last_z_age.pop(name, None)
-        
         # _____ Adding coords of the joint to the row _____
         row += [x, y, z, vis]
       
@@ -259,6 +294,7 @@ def main():
     ret, frame = cap_L.read()
     if not ret:
         print("Error: cannot read first frame")
+        return
     frame_h, frame_w = frame.shape[:2] 
     cap_L.set(cv2.CAP_PROP_POS_FRAMES, 0)
     img_size = (frame_w, frame_h)
@@ -266,14 +302,20 @@ def main():
     print("Building rectification map...")
     map_L1, map_L2, map_R1, map_R2, P_L, P_R, Q = _build_rectification_map(img_size)
     sgbm = _build_sgbm()
+    right_matcher = cv2.ximgproc.createRightMatcher(sgbm)   # creato una volta sola
+    wls = cv2.ximgproc.createDisparityWLSFilter(sgbm)       # creato una volta sola
+    wls.setLambda(2000)
+    wls.setSigmaColor(1.5)
     print("Ready. Press 'P' to pause/resume, 'Q' to quit\n")
 
     # __________ Initialization __________
     csv_path = init_csv_files(output_path)
     last_z_pose = {}
-    last_z_age = {}
+    last_z_age  = {}
+    stereo_oef  = {name: _OneEuroFilter(min_cutoff=OEF_MIN_CUTOFF, beta=OEF_BETA)
+                   for name in ('left_elbow', 'right_elbow', 'left_wrist', 'right_wrist')}
     i_frame = 0
-    paused = False
+    paused  = False
 
     with mp_pose.Pose(
         model_complexity = 2,
@@ -283,7 +325,7 @@ def main():
         min_tracking_confidence = 0.6
     ) as pose:
 
-        _clahe = cv2.createCLAHE(clipLimit=4, tileGridSize=(8,8)) # serve ad aumentare il contrasto in modo locale
+        _clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) # serve ad aumentare il contrasto in modo locale
         display_bgr = None
 
         # __________ Main loop __________
@@ -303,28 +345,24 @@ def main():
                 gray_L = _clahe.apply(cv2.cvtColor(rect_L, cv2.COLOR_BGR2GRAY))
                 gray_R = _clahe.apply(cv2.cvtColor(rect_R, cv2.COLOR_BGR2GRAY))
 
-                # Creo la disparity map
-                disp_L = sgbm.compute(gray_L, gray_R)
+                # Creo la disparity map (raw, usata per LRC confidence)
+                disp_L_raw = sgbm.compute(gray_L, gray_R)
 
-                # Filtraggio WLS
-                right_matcher = cv2.ximgproc.createRightMatcher(sgbm)
+                # Filtraggio WLS (disp_L filtrata, usata per la depth map)
                 disp_R = right_matcher.compute(gray_R, gray_L)
-                wls = cv2.ximgproc.createDisparityWLSFilter(sgbm)
-                wls.setLambda(2000)
-                wls.setSigmaColor(1.5)
-                disp_L = wls.filter(disp_L, gray_L, disparity_map_right=disp_R)
+                disp_L = wls.filter(disp_L_raw, gray_L, disparity_map_right=disp_R)
 
-                # Creo depth map
+                # Creo depth map dalla disparity filtrata (più smooth)
                 depth_map = _disparity_to_depth_map(disp_L, P_L)
 
                 # Show disparity and depth maps
                 disp_vis = cv2.normalize(disp_L, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
                 disp_color = cv2.applyColorMap(disp_vis, cv2.COLORMAP_JET)
-                # cv2.imshow("Disparity", disp_color)
+                cv2.imshow("Disparity", disp_color)
                 d_vis = depth_map.copy()
                 d_vis = np.clip(d_vis, Z_MIN, Z_MAX)
                 d_vis = ((d_vis - Z_MIN) / (Z_MAX - Z_MIN) * 255).astype(np.uint8)
-                # cv2.imshow("Depth", d_vis)
+                cv2.imshow("Depth", d_vis)
 
                 # Prendo i landmark da MediaPipe e li salvo in 'results'
                 rgb_L = cv2.cvtColor(rect_L, cv2.COLOR_BGR2RGB)
@@ -334,7 +372,7 @@ def main():
 
                 # Estraggo le coordinate dei giunti e scrivo la riga nel file output (pose.csv)
                 timestamp = i_frame / fps
-                pose_row = _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame_h, last_z_pose, last_z_age, disp_L, disp_R)
+                pose_row = _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame_h, last_z_pose, last_z_age, stereo_oef, disp_L_raw, disp_R)
                 with open(csv_path['pose'], 'a', newline='') as f:
                     csv.writer(f).writerow(pose_row)
 
@@ -351,7 +389,7 @@ def main():
             cv2.putText(display_bgr, f"{subject} / {exercise} / {video}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             dh = int(frame_h * DISPLAY_WIDTH / frame_w)
             shown = cv2.resize(display_bgr, (DISPLAY_WIDTH, dh))
-            # cv2.imshow("Reachy - Stereo Landmark Extraction", shown)
+            cv2.imshow("Reachy - Stereo Landmark Extraction", shown)
 
             # Gestisci comandi da tastiera (pause and quit)
             key = cv2.waitKey(1 if not paused else 0) & 0xFF

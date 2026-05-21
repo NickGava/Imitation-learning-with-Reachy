@@ -71,8 +71,14 @@ def run_exercise_evaluation(exercise_num: int,
         print('  SKIP: baseline.csv mancante.')
         return {}
 
+    # Determina braccio attivo subito — serve sia per metriche che per plot
+    stds         = np.std(baseline, axis=0)
+    active_joint = int(np.argmax(stds))
+    active_side  = 'right' if active_joint < 8 else 'left'
+    print(f'  Active side: {active_side}')
+
     canonical  = load_canonical(split_dir)       # canonical e' nello split
-    human_demos = load_human_demos(landmarks_root, exercise_num)
+    human_demos = load_human_demos(landmarks_root, exercise_num, n_demos=n_demos)
 
     # --- Caricamento traiettorie BC pre-generate ----------------------------
     print('\nCaricamento traiettorie BC ...')
@@ -88,7 +94,8 @@ def run_exercise_evaluation(exercise_num: int,
     human_demos_dtw: List[float] = []
     if human_demos:
         joint_list = [compute_metrics(d, baseline) for d in human_demos]
-        cart_list  = [compute_cartesian_metrics(d, baseline) for d in human_demos]
+        cart_list  = [compute_cartesian_metrics(d, baseline, active_side=active_side)
+                      for d in human_demos]
         human_demos_dtw = [c['cart_dtw'] for c in cart_list]
         merged     = [{**j, **c} for j, c in zip(joint_list, cart_list)]
         results['Human demos'] = aggregate_metrics(merged)
@@ -100,13 +107,16 @@ def run_exercise_evaluation(exercise_num: int,
 
     if canonical is not None:
         jm = compute_metrics(canonical, baseline, label='Canonical')
-        cm = compute_cartesian_metrics(canonical, baseline, label='Canonical [cart]')
+        cm = compute_cartesian_metrics(canonical, baseline,
+                                       active_side=active_side, label='Canonical [cart]')
         results['Canonical'] = {**jm, **cm}
 
     for arch_name, traj in bc_trajs.items():
         if traj is not None:
             jm = compute_metrics(traj, baseline, label=arch_name)
-            cm = compute_cartesian_metrics(traj, baseline, label=f'{arch_name} [cart]')
+            cm = compute_cartesian_metrics(traj, baseline,
+                                           active_side=active_side,
+                                           label=f'{arch_name} [cart]')
             results[arch_name] = {**jm, **cm}
 
     if not results:
@@ -119,11 +129,6 @@ def run_exercise_evaluation(exercise_num: int,
 
     print('\nGenerazione plot ...')
     suffix = f' -- Exercise {exercise_num:03d} [{modality}]'
-
-    # Determina braccio attivo dalla baseline (joint con std massima)
-    stds        = np.std(baseline, axis=0)
-    active_joint = int(np.argmax(stds))
-    active_side  = 'right' if active_joint < 8 else 'left'
 
     all_trajs = {'Baseline': baseline, 'Canonical': canonical, **bc_trajs}
 

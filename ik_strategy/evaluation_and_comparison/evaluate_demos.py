@@ -44,12 +44,16 @@ from utilities.split_utils import N_DEMOS_SPLITS, split_name
 from evaluation_and_comparison._config import PALETTE
 
 
-METRICS = [
-    ('cart_dtw_norm',    'DTW (m/frame)',    True),
-    ('cart_rmse_l_wrist','RMSE Lw (m)',      True),
-    ('cart_rmse_r_wrist','RMSE Rw (m)',      True),
-    ('cart_pearson_mean','Pearson cart',     False),
-    ('rmse_mean',        'RMSE joint (deg)', True),
+# Candidati metriche — solo quelle con valori non-NaN nel CSV vengono plottate
+# (automaticamente filtra il braccio inattivo)
+METRICS_CANDIDATES = [
+    ('cart_dtw',          'DTW (m)',          True),
+    ('cart_rmse_wrist',   'RMSE wrist (m)',   True),
+    ('cart_rmse_elbow',   'RMSE elbow (m)',   True),
+    ('cart_rmse_l_wrist', 'RMSE Lw (m)',      True),
+    ('cart_rmse_r_wrist', 'RMSE Rw (m)',      True),
+    ('cart_pearson_mean', 'Pearson cart',     False),
+    ('rmse_mean',         'RMSE joint (deg)', True),
 ]
 
 METHOD_ORDER = ['Human demos', 'Canonical', 'MLP', 'GRU', 'Transformer']
@@ -74,10 +78,9 @@ def _plot_metrics_vs_demos(df: pd.DataFrame, output_dir: Path,
     methods  = [m for m in METHOD_ORDER
                 if m in df['method'].values and m != 'Human demos']
 
-    for metric_key, ylabel, lower_is_better in METRICS:
+    for metric_key, ylabel, lower_is_better in METRICS_CANDIDATES:
         if metric_key not in df.columns or df[metric_key].isna().all():
             continue
-
         fig, ax = plt.subplots(figsize=(7, 5))
         plotted = False
         for method in methods:
@@ -157,7 +160,7 @@ def run_demos_analysis(exercise_nums: List[int]) -> None:
     global_df.to_csv(p, index=False)
     print(f'\nSaved -> {p}')
 
-    metric_cols = [m[0] for m in METRICS if m[0] in global_df.columns]
+    metric_cols = [m[0] for m in METRICS_CANDIDATES if m[0] in global_df.columns]
     agg = (global_df.groupby(['n_demos', 'method'])[metric_cols]
                     .mean().reset_index())
     p = out_dir / 'results_aggregated.csv'

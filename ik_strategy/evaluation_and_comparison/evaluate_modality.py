@@ -191,6 +191,13 @@ def run_modality_analysis(n_demos: int = 55) -> None:
 
     by_ex = pd.concat(all_dfs, ignore_index=True)
 
+    # Colonna derivata: RMSE del braccio attivo (sempre definita,
+    # compatibile con CSV generati prima dell'aggiornamento di _io.py)
+    if 'cart_rmse_wrist' not in by_ex.columns:
+        by_ex['cart_rmse_wrist'] = (by_ex.get('cart_rmse_l_wrist', float('nan'))
+                                         .fillna(by_ex.get('cart_rmse_r_wrist',
+                                                            float('nan'))))
+
     # Salva CSV raw
     p = out_dir / 'results_by_exercise.csv'
     by_ex.to_csv(p, index=False)
@@ -202,32 +209,40 @@ def run_modality_analysis(n_demos: int = 55) -> None:
     agg = (by_ex.groupby(['modality', 'method'])[metric_cols]
                  .mean()
                  .reset_index())
+
+    if 'cart_rmse_wrist' not in agg.columns:
+        agg['cart_rmse_wrist'] = (agg.get('cart_rmse_l_wrist', float('nan'))
+                                      .fillna(agg.get('cart_rmse_r_wrist', float('nan'))))
     p = out_dir / 'results_aggregated.csv'
     agg.to_csv(p, index=False)
     print(f'  Saved -> {p.name}')
 
     # Plot
     print('\n  Generazione plot ...')
-    for metric, ylabel, fname in [
-        ('cart_dtw_norm',    'DTW (m/frame)  (lower=better)',  'plot_dtw_modality.png'),
-        ('cart_rmse_l_wrist','RMSE Lw (m)    (lower=better)',  'plot_rmse_lw_modality.png'),
-        ('cart_rmse_r_wrist','RMSE Rw (m)    (lower=better)',  'plot_rmse_rw_modality.png'),
-        ('cart_pearson_mean','Pearson cart   (higher=better)', 'plot_pearson_modality.png'),
-        ('rmse_mean',        'RMSE joint (deg)(lower=better)', 'plot_rmse_joint_modality.png'),
-    ]:
-        if metric not in agg.columns:
+    PLOT_CANDIDATES = [
+        ('cart_dtw',          'DTW (m)  (lower=better)',      'plot_dtw_modality.png'),
+        ('cart_rmse_l_wrist', 'RMSE Lw (m)  (lower=better)', 'plot_rmse_lw_modality.png'),
+        ('cart_rmse_r_wrist', 'RMSE Rw (m)  (lower=better)', 'plot_rmse_rw_modality.png'),
+        ('cart_rmse_l_elbow', 'RMSE Le (m)  (lower=better)', 'plot_rmse_le_modality.png'),
+        ('cart_rmse_r_elbow', 'RMSE Re (m)  (lower=better)', 'plot_rmse_re_modality.png'),
+        ('cart_pearson_mean', 'Pearson cart  (higher=better)','plot_pearson_modality.png'),
+        ('rmse_mean',         'RMSE joint (deg)(lower=better)','plot_rmse_joint_modality.png'),
+    ]
+    for metric, ylabel, fname in PLOT_CANDIDATES:
+        if metric not in agg.columns or agg[metric].isna().all():
             continue
         _grouped_bar_modality(
             agg, metric, ylabel=ylabel,
             title=f'Modality Analysis -- {ylabel}',
             output_path=out_dir / fname)
 
-    for metric, ylabel, fname in [
-        ('cart_dtw_norm',    'DTW (m/frame)',  'plot_dtw_per_exercise.png'),
-        ('cart_rmse_l_wrist','RMSE Lw (m)',    'plot_rmse_per_exercise.png'),
-        ('cart_pearson_mean','Pearson cart',   'plot_pearson_per_exercise.png'),
-    ]:
-        if metric not in by_ex.columns:
+    LINE_CANDIDATES = [
+        ('cart_dtw',         'DTW (m)',           'plot_dtw_per_exercise.png'),
+        ('cart_rmse_wrist',  'RMSE wrist (m)',    'plot_rmse_wrist_per_exercise.png'),
+        ('cart_pearson_mean','Pearson cart',      'plot_pearson_per_exercise.png'),
+    ]
+    for metric, ylabel, fname in LINE_CANDIDATES:
+        if metric not in by_ex.columns or by_ex[metric].isna().all():
             continue
         _line_per_exercise(
             by_ex, metric, ylabel,
