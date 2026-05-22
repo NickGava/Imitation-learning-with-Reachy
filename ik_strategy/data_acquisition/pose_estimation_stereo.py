@@ -93,7 +93,7 @@ def _build_rectification_map(img_size):
     R1, R2, P_L, P_R, Q, _, _ = cv2.stereoRectify(
         LEFT_K, LEFT_D, RIGHT_K, RIGHT_D, img_size,
         R, T, flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=1
+        alpha=0.3
     )
     map_L1, map_L2 = cv2.initUndistortRectifyMap(LEFT_K, LEFT_D, R1, P_L, img_size, cv2.CV_32FC1)
     map_R1, map_R2 = cv2.initUndistortRectifyMap(RIGHT_K, RIGHT_D, R2, P_R, img_size, cv2.CV_32FC1)
@@ -238,7 +238,7 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
 
 
     # __________ Get all landmarks of the frame __________
-    WRIST_NAMES = {'left_wrist', 'right_wrist', 'left_elbow', 'right_elbow'}
+    STEREO_NAMES = {'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist'}
 
     for name, i in POSE_INDICES.items():
         lm = lms.landmark[i]
@@ -249,8 +249,8 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
         z   = w_lm.z    # default: pure MediaPipe for all landmarks
         vis = w_lm.visibility
 
-        # _____ Stereo z only for elbow/wrist landmarks _____
-        if name in WRIST_NAMES and sh_z_stereo is not None:
+        # _____ Stereo z for shoulder/elbow/wrist landmarks _____
+        if name in STEREO_NAMES and sh_z_stereo is not None:
             u = int(round(lm.x * frame_w))
             v = int(round(lm.y * frame_h))
             confidence = _stereo_confidence(disp_L, disp_R, u, v)
@@ -313,7 +313,7 @@ def main():
     last_z_pose = {}
     last_z_age  = {}
     stereo_oef  = {name: _OneEuroFilter(min_cutoff=OEF_MIN_CUTOFF, beta=OEF_BETA)
-                   for name in ('left_elbow', 'right_elbow', 'left_wrist', 'right_wrist')}
+                   for name in ('left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist')}
     i_frame = 0
     paused  = False
 
@@ -358,11 +358,11 @@ def main():
                 # Show disparity and depth maps
                 disp_vis = cv2.normalize(disp_L, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
                 disp_color = cv2.applyColorMap(disp_vis, cv2.COLORMAP_JET)
-                cv2.imshow("Disparity", disp_color)
+                # cv2.imshow("Disparity", disp_color)
                 d_vis = depth_map.copy()
                 d_vis = np.clip(d_vis, Z_MIN, Z_MAX)
                 d_vis = ((d_vis - Z_MIN) / (Z_MAX - Z_MIN) * 255).astype(np.uint8)
-                cv2.imshow("Depth", d_vis)
+                # cv2.imshow("Depth", d_vis)
 
                 # Prendo i landmark da MediaPipe e li salvo in 'results'
                 rgb_L = cv2.cvtColor(rect_L, cv2.COLOR_BGR2RGB)
@@ -389,7 +389,7 @@ def main():
             cv2.putText(display_bgr, f"{subject} / {exercise} / {video}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             dh = int(frame_h * DISPLAY_WIDTH / frame_w)
             shown = cv2.resize(display_bgr, (DISPLAY_WIDTH, dh))
-            cv2.imshow("Reachy - Stereo Landmark Extraction", shown)
+            # cv2.imshow("Reachy - Stereo Landmark Extraction", shown)
 
             # Gestisci comandi da tastiera (pause and quit)
             key = cv2.waitKey(1 if not paused else 0) & 0xFF

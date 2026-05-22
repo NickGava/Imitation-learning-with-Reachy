@@ -1,28 +1,36 @@
 '''
 compute_canonical.py
 =============================================================================
-Computes the canonical trajectory for each exercise using ShapeDBA
-(ShapeDTW Barycenter Averaging via aeon).
+Computes canonical trajectories for each exercise using two methods in parallel:
+  - Standard DBA  (DTW Barycenter Averaging via tslearn)  → canonical.csv
+  - ShapeDBA      (ShapeDTW Barycenter Averaging via aeon) → canonicalShape.csv
 
 Input: all data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv for the same exercise (for all exercises)
 
-Output: data/dataset/exercise_XXX/canonical.csv
+Output: data/dataset/exercise_XXX/<split>/canonical.csv
+        data/dataset/exercise_XXX/<split>/canonicalShape.csv
 
 Usage:
   python compute_canonical.py                           # all exercises, all subjects
   python compute_canonical.py --exercise 1              # only exercise 1
   python compute_canonical.py --exercise 1 --subject 2  # only subject 2, exercise 1
-  python compute_canonical.py --max-iter 50             # change number of ShapeDBA iterations (default: 30)
+  python compute_canonical.py --max-iter 50             # change number of DBA iterations (default: 30)
   python compute_canonical.py --reach 30                # ShapeDTW neighborhood size (default: 15)
   python compute_canonical.py --amplitude-percentile 95 # use 95th percentile for rescaling (default: 80)
   python compute_canonical.py --no-amplitude-rescale    # disable amplitude rescaling
 
 Amplitude rescaling (enabled by default):
-  Before ShapeDBA, each sequence is normalized per-joint to [0, 1] so that the algorithm
-  captures only the temporal shape (timing, velocity profile). After ShapeDBA, the canonical
+  Before DBA/ShapeDBA, each sequence is normalized per-joint to [0, 1] so that the algorithm
+  captures only the temporal shape (timing, velocity profile). After averaging, the canonical
   is rescaled back using the Nth percentile of per-demo max values (and the (100-N)th
   percentile of per-demo min values). This prevents low-amplitude demos from dominating
   the barycenter and ensures the canonical reaches a realistic full range.
+  The same normalization is applied to both DBA and ShapeDBA for a fair comparison.
+
+DBA (standard):
+  Uses standard DTW Barycenter Averaging (tslearn). Variable-length sequences are resampled
+  to median length before averaging for consistency with ShapeDBA.
+  Requires: pip install tslearn
 
 ShapeDBA:
   Uses ShapeDTW which aligns shape descriptors of subsequences (neighborhoods of size
@@ -182,6 +190,83 @@ def _run_shape_dba(
     print(f'Done. Canonical length: {len(barycenter)} frames')
     return barycenter
 
+
+def _run_dba(
+    arrays: List[np.ndarray],
+    max_iter: int,
+    label: str,
+    **_kwargs,  # absorbs unused kwargs (e.g. reach) for uniform call signature
+) -> np.ndarray:
+    '''
+    Runs standard DBA (DTW Barycenter Averaging) via tslearn.
+
+    All sequences are resampled to median length before averaging,
+    consistent with _run_shape_dba.
+
+    Parameters:
+        arrays   : list of (N_i, D) arrays (sequences to average)
+        max_iter : maximum number of DBA iterations
+        label    : name shown in progress output
+
+    Returns:
+        (L, D) array : the canonical sequence (L = median input length)
+    '''
+    from tslearn.barycenters import dtw_barycenter_averaging
+
+    lengths    = np.array([len(a) for a in arrays])
+    median_len = int(np.median(lengths))
+
+    print(f'Running DBA on {label} ({len(arrays)} sequences, '
+          f'max_iter={max_iter}) ...', flush=True)
+
+    resampled = [_resample_sequence(a, median_len) for a in arrays]
+    X = np.stack(resampled, axis=0)   # (S, L, D) — tslearn convention
+
+    barycenter = dtw_barycenter_averaging(X, max_iter=max_iter)  # (L, D)
+    print(f'Done. Canonical length: {len(barycenter)} frames')
+    return barycenter
+
+
+# ---------------------------------------------------------------------------
+# Output helper
+# ---------------------------------------------------------------------------
+def _save_canonical_csv(
+    canonical_joints: np.ndarray,
+    canonical_head: np.ndarray,
+    sequences: List[pd.DataFrame],
+    output_path: Path,
+) -> None:
+    '''
+    Builds the output DataFrame from canonical joints + head and saves it.
+
+    Parameters:
+        canonical_joints : (L, len(JOINT_COLS)) array in degrees
+        canonical_head   : (L, 3) array in meters (may be all-NaN)
+        sequences        : input DataFrames used to compute mean duration
+        output_path      : full path of the .csv file to write
+    '''
+    L = len(canonical_joints)
+
+    mean_duration = np.mean([
+        df['timestamp'].iloc[-1] - df['timestamp'].iloc[0]
+        for df in sequences
+        if 'timestamp' in df.columns and len(df) > 1
+    ])
+    timestamps = np.linspace(0.0, float(mean_duration), L)
+
+    out = pd.DataFrame({'frame': np.arange(L), 'timestamp': timestamps})
+
+    for j, col in enumerate(JOINT_COLS):
+        out[col] = canonical_joints[:, j]
+
+    for j, col in enumerate(HEAD_COLS):
+        out[col] = canonical_head[:, j]
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    out[OUTPUT_COLS].to_csv(output_path, index=False)
+    print(f'  Saved -> {output_path.relative_to(DATA_ROOT)}')
+
+
 # ---------------------------------------------------------------------------
 # Amplitude normalisation helpers
 # ---------------------------------------------------------------------------
@@ -329,74 +414,87 @@ def _process_exercise(exercise_num, landmarks_root, dataset_root,
     head_available = [df for df in sequences if all(c in df.columns for c in HEAD_COLS) and not df[HEAD_COLS].isna().all().any()]
     head_arrays = [df[HEAD_COLS].values.astype(float) for df in head_available]
 
-    # --- Amplitude normalisation (joints only) ---
+    split_dir = dataset_root / exercise_name / split_name(n_demos)
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    # -----------------------------------------------------------------------
+    # Shared amplitude normalisation (same preprocessing for both methods)
+    # -----------------------------------------------------------------------
     if amplitude_rescale:
         print(f'\nAmplitude rescaling ENABLED (percentile={amplitude_percentile})')
         norm_joint_arrays, seq_mins, seq_maxs = _normalize_amplitude(joint_arrays)
-        canonical_joints_norm = _run_shape_dba(norm_joint_arrays, max_iter, label='joints (normalised [0,1])', reach=reach)
-        canonical_joints = _rescale_canonical(canonical_joints_norm, seq_mins, seq_maxs, amplitude_percentile)
 
-        # Log per-joint rescaling info
+        # Log per-joint rescaling targets
         target_max = np.percentile(seq_maxs, amplitude_percentile, axis=0)
         target_min = np.percentile(seq_mins, 100 - amplitude_percentile, axis=0)
-        raw_dba_max = canonical_joints_norm.max(axis=0) * (target_max - target_min) + target_min
         print(f'  {"Joint":<30} {"TargetMin":>10} {"TargetMax":>10}')
         for j, col in enumerate(JOINT_COLS):
             print(f'  {col:<30} {target_min[j]:>10.2f} {target_max[j]:>10.2f}')
     else:
         print('\nAmplitude rescaling DISABLED')
-        canonical_joints = _run_shape_dba(joint_arrays, max_iter, label='joints (degrees)', reach=reach)
+        norm_joint_arrays = joint_arrays
+        seq_mins = seq_maxs = None
 
-    # --- Smoothing (joint space) ---
-    if smooth:
-        print(f'\nSmoothing canonical joints (median + Savitzky-Golay, window={smooth_window}) ...')
-        canonical_joints = _smooth_canonical(canonical_joints, smooth_window)
-        print('Done.')
+    def _compute_joints(run_fn, label_suffix):
+        '''Amplitude-normalise → run_fn → rescale → smooth.'''
+        if amplitude_rescale:
+            canonical_norm = run_fn(norm_joint_arrays, max_iter,
+                                    label=f'joints (normalised) [{label_suffix}]',
+                                    reach=reach)
+            canonical = _rescale_canonical(canonical_norm, seq_mins, seq_maxs,
+                                           amplitude_percentile)
+        else:
+            canonical = run_fn(joint_arrays, max_iter,
+                               label=f'joints [{label_suffix}]',
+                               reach=reach)
+        if smooth:
+            print(f'\nSmoothing [{label_suffix}] joints (median + Savitzky-Golay, window={smooth_window}) ...')
+            canonical = _smooth_canonical(canonical, smooth_window)
+            print('Done.')
+        return canonical
 
-    if head_arrays:
-        canonical_head = _run_shape_dba(head_arrays, max_iter, label='head (meters)', reach=reach)
-        # canonical_head may have different length than canonical_joints if not all sequences had head data; resample to match joints length
-        if len(canonical_head) != len(canonical_joints):
-            t_old = np.linspace(0, 1, len(canonical_head))
-            t_new = np.linspace(0, 1, len(canonical_joints))
-            interp = interp1d(t_old, canonical_head, axis=0, kind='linear')
-            canonical_head = interp(t_new)
-    else:
-        print('No head data found, filling head columns with NaN.')
-        canonical_head = np.full((len(canonical_joints), 3), np.nan)
+    def _compute_head(run_fn, label_suffix, target_len):
+        '''Run run_fn on head arrays and resample to target_len if needed.'''
+        if not head_arrays:
+            print(f'No head data found [{label_suffix}], filling with NaN.')
+            return np.full((target_len, 3), np.nan)
+        canonical = run_fn(head_arrays, max_iter,
+                           label=f'head [{label_suffix}]',
+                           reach=reach)
+        if len(canonical) != target_len:
+            t_old = np.linspace(0, 1, len(canonical))
+            t_new = np.linspace(0, 1, target_len)
+            canonical = interp1d(t_old, canonical, axis=0, kind='linear')(t_new)
+        return canonical
 
-    # --- Build output DataFrame ---
-    L = len(canonical_joints)
+    # -----------------------------------------------------------------------
+    # ShapeDBA → canonicalShape.csv
+    # -----------------------------------------------------------------------
+    print(f'\n{"─"*55}')
+    print(f'  ShapeDBA  (reach={reach})')
+    print(f'{"─"*55}')
+    shape_joints = _compute_joints(_run_shape_dba, 'ShapeDBA')
+    shape_head   = _compute_head(_run_shape_dba, 'ShapeDBA', len(shape_joints))
+    _save_canonical_csv(shape_joints, shape_head, sequences,
+                        split_dir / 'canonicalShape.csv')
 
-    # Reconstruct timestamps: linearly spaced from 0 to mean duration
-    mean_duration = np.mean([
-        df['timestamp'].iloc[-1] - df['timestamp'].iloc[0]
-        for df in sequences
-        if 'timestamp' in df.columns and len(df) > 1
-    ])
-    timestamps = np.linspace(0.0, float(mean_duration), L)
-
-    out = pd.DataFrame({'frame': np.arange(L), 'timestamp': timestamps,})
-
-    for j, col in enumerate(JOINT_COLS):
-        out[col] = canonical_joints[:, j]
-
-    for j, col in enumerate(HEAD_COLS):
-        out[col] = canonical_head[:, j]
-
-    # Save
-    split_dir   = dataset_root / exercise_name / split_name(n_demos)
-    split_dir.mkdir(parents=True, exist_ok=True)
-    output_path = split_dir / 'canonical.csv'
-    out[OUTPUT_COLS].to_csv(output_path, index=False)
+    # -----------------------------------------------------------------------
+    # Standard DBA → canonical.csv
+    # -----------------------------------------------------------------------
+    print(f'\n{"─"*55}')
+    print(f'  Standard DBA')
+    print(f'{"─"*55}')
+    dba_joints = _compute_joints(_run_dba, 'DBA')
+    dba_head   = _compute_head(_run_dba, 'DBA', len(dba_joints))
+    _save_canonical_csv(dba_joints, dba_head, sequences,
+                        split_dir / 'canonical.csv')
 
     # Summary
     mean_input_len = np.mean([len(s) for s in sequences])
     print(f'\n  Input sequences  : {len(sequences)}')
     print(f'  Mean input length: {mean_input_len:.0f} frames')
-    print(f'  Canonical length : {L} frames')
-    print(f'  Mean duration    : {mean_duration:.2f} s')
-    print(f'  Saved -> {output_path.relative_to(DATA_ROOT)}')
+    print(f'  ShapeDBA length  : {len(shape_joints)} frames')
+    print(f'  DBA length       : {len(dba_joints)} frames')
 
 # ---------------------------------------------------------------------------
 # Main

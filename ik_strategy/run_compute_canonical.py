@@ -146,6 +146,26 @@ def main():
             except Exception as e:
                 print(f'  [WARN] Plot failed for {ex_name}: {e}')
 
+            # --- Plot canonicalShape FK ---
+            canonical_shape_path = split_dir / 'canonicalShape.csv'
+            try:
+                trajectory_shape = _load_trajectory(canonical_shape_path)
+
+                fig      = _fk_figure(trajectory_shape, ex_num, 'canonicalShape')
+                out_path = plot_dir / 'canonicalShape_fk.png'
+                fig.savefig(out_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                print(f'  Plot saved -> {out_path.relative_to(DATA_ROOT)}')
+
+                fig_j      = _joints_figure(trajectory_shape, ex_num, 'canonicalShape')
+                out_path_j = joints_dir / 'joints_canonicalShape.png'
+                fig_j.savefig(out_path_j, dpi=150, bbox_inches='tight')
+                plt.close(fig_j)
+                print(f'  Saved -> {out_path_j.relative_to(DATA_ROOT)}')
+
+            except Exception as e:
+                print(f'  [WARN] Plot failed for canonicalShape {ex_name}: {e}')
+
         except Exception as e:
             print(f'  [FAIL] {ex_name}: {e}')
             fail_list.append(ex_name)

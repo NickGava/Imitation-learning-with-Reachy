@@ -56,7 +56,7 @@ METRICS_CANDIDATES = [
     ('rmse_mean',         'RMSE joint (deg)', True),
 ]
 
-METHOD_ORDER = ['Human demos', 'Canonical', 'MLP', 'GRU', 'Transformer']
+METHOD_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
 
 
 def _load_split_results(exercise_dir: Path, n_demos: int) -> Optional[pd.DataFrame]:

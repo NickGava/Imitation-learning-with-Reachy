@@ -1,14 +1,17 @@
 (MIGLIORARE LA STEREO POSE ESTIMATION ricalibrando)
 
-shapeDBA vs DBA 
+shapeDBA vs DBA         ✓
 
-togliere human demo dai grafici
+togliere human demo dai grafici         ✓
 
-fare più run di addestramento e calcolare media e varianza, se varianza è bassa è buono
+inserire peak wrist distance error e smoothness nella heatmap        ✓
+spider chart per la heatmap, define boundariess                      ✓
 
-inserire peak angle error e smoothness nella heatmap
-spider chart per la heatmap, define boundariess
-ripeti tutte le valutazioni
+rifare tutta la data acquisition di stereo e mix
+
+fare più run di addestramento e calcolare media e varianza, se varianza è bassa è buono 
+
+ripeti tutte le pipeline (tranne run_data_acquisition)
 
 mettere ordine nella repo 
 

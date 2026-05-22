@@ -13,6 +13,7 @@ Output (in data/dataset/exercise_NNN/n_XX/evaluation/):
     plot_velocity_<joint>.png
     plot_cartesian_*.png
     plot_summary_heatmap.png
+    plot_spider_chart.png
 
 Uso standalone:
     py -m evaluation_and_comparison.evaluate_exercise --exercise 1
@@ -30,8 +31,8 @@ from utilities.split_utils import split_name, N_DEMOS_SPLITS
 
 from evaluation_and_comparison._config  import ARCHITECTURES, get_modality
 from evaluation_and_comparison._io      import (
-    load_baseline, load_canonical, load_human_demos,
-    load_bc_trajectory, save_results_csv,
+    load_baseline, load_canonical, load_canonical_shape,
+    load_human_demos, load_bc_trajectory, load_bc_runs_variance, save_results_csv,
 )
 from evaluation_and_comparison._metrics import (
     compute_metrics, compute_cartesian_metrics, aggregate_metrics, print_summary,
@@ -40,7 +41,7 @@ from evaluation_and_comparison._plots   import (
     plot_degradation_chain, plot_velocity_profile,
     plot_cartesian_trajectories,
     plot_cartesian_velocity,
-    plot_3d_trajectories, plot_summary_heatmap,
+    plot_3d_trajectories, plot_summary_heatmap, plot_spider_chart,
 )
 
 
@@ -77,8 +78,9 @@ def run_exercise_evaluation(exercise_num: int,
     active_side  = 'right' if active_joint < 8 else 'left'
     print(f'  Active side: {active_side}')
 
-    canonical  = load_canonical(split_dir)       # canonical e' nello split
-    human_demos = load_human_demos(landmarks_root, exercise_num, n_demos=n_demos)
+    canonical        = load_canonical(split_dir)        # DBA standard
+    canonical_shape  = load_canonical_shape(split_dir)  # ShapeDBA
+    human_demos      = load_human_demos(landmarks_root, exercise_num, n_demos=n_demos)
 
     # --- Caricamento traiettorie BC pre-generate ----------------------------
     print('\nCaricamento traiettorie BC ...')
@@ -90,26 +92,53 @@ def run_exercise_evaluation(exercise_num: int,
     print('\nCalcolo metriche ...')
     results: Dict[str, Dict] = {}
 
-    # DTW individuale per ogni demo umana (per il box plot)
-    human_demos_dtw: List[float] = []
+    # Human demos — solo come riferimento per i bounds, non mostrate nei grafici
+    # Calcola metriche per-demo per estrarre best/worst individuale per ogni metrica
+    _LOWER_IS_BETTER_KEYS = {
+        'dtw_distance', 'rmse_mean', 'peak_error_mean',
+        'cart_dtw',
+        'cart_rmse_r_wrist', 'cart_rmse_l_wrist',
+        'cart_rmse_r_elbow', 'cart_rmse_l_elbow',
+        'cart_peak_r_wrist', 'cart_peak_l_wrist',
+    }
+    human_bounds: Dict[str, tuple] = {}   # {metric_key: (best_val, worst_val)}
+
     if human_demos:
         joint_list = [compute_metrics(d, baseline) for d in human_demos]
         cart_list  = [compute_cartesian_metrics(d, baseline, active_side=active_side)
                       for d in human_demos]
-        human_demos_dtw = [c['cart_dtw'] for c in cart_list]
-        merged     = [{**j, **c} for j, c in zip(joint_list, cart_list)]
+        merged = [{**j, **c} for j, c in zip(joint_list, cart_list)]
         results['Human demos'] = aggregate_metrics(merged)
         r = results['Human demos']
-        print(f'  [Human demos      ]  '
-              f'DTW={r["dtw_distance"]:>9.2f}  RMSE={r["rmse_mean"]:>6.2f}  '
-              f'DTW_cart={r["cart_dtw"]:.4f}m  '
-              f'Rw={r["cart_rmse_r_wrist"]:.4f}m  Lw={r["cart_rmse_l_wrist"]:.4f}m')
+        print(f'  [Human demos (ref)]  DTW={r["dtw_distance"]:>9.2f}  '
+              f'RMSE={r["rmse_mean"]:>6.2f}  DTW_cart={r["cart_dtw"]:.4f}m  '
+              f'Smooth={r["smoothness"]:.4f}')
+
+        # Raccogli valori per-demo e calcola (best, worst)
+        per_demo_vals: Dict[str, List[float]] = {}
+        for combo in merged:
+            for key, val in combo.items():
+                if isinstance(val, float) and not np.isnan(val):
+                    per_demo_vals.setdefault(key, []).append(val)
+        for key, vals in per_demo_vals.items():
+            if not vals:
+                continue
+            if key in _LOWER_IS_BETTER_KEYS:
+                human_bounds[key] = (min(vals), max(vals))   # (best=min, worst=max)
+            else:
+                human_bounds[key] = (max(vals), min(vals))   # (best=max, worst=min)
 
     if canonical is not None:
         jm = compute_metrics(canonical, baseline, label='Canonical')
         cm = compute_cartesian_metrics(canonical, baseline,
                                        active_side=active_side, label='Canonical [cart]')
         results['Canonical'] = {**jm, **cm}
+
+    if canonical_shape is not None:
+        jm = compute_metrics(canonical_shape, baseline, label='CanonicalShape')
+        cm = compute_cartesian_metrics(canonical_shape, baseline,
+                                       active_side=active_side, label='CanonicalShape [cart]')
+        results['CanonicalShape'] = {**jm, **cm}
 
     for arch_name, traj in bc_trajs.items():
         if traj is not None:
@@ -123,6 +152,18 @@ def run_exercise_evaluation(exercise_num: int,
         print('  Nessun risultato — verificare canonical.csv e modelli.')
         return {}
 
+    # ── Varianza tra training run (None se single-run) ─────────────────────
+    arch_variance: Dict[str, Optional[Dict]] = {}
+    for arch_name in ARCHITECTURES:
+        arch_variance[arch_name] = load_bc_runs_variance(split_dir, arch_name)
+    has_variance = any(v is not None for v in arch_variance.values())
+    if has_variance:
+        print('\nVarianza inter-run caricata:')
+        for arch, var in arch_variance.items():
+            if var:
+                print(f'  {arch}: DTW=±{var.get("dtw_distance", float("nan")):.4f}  '
+                      f'cart_DTW=±{var.get("cart_dtw", float("nan")):.4f}m')
+
     # --- Salvataggio e plot -------------------------------------------------
     print('\nSalvataggio CSV ...')
     save_results_csv(results, output_dir)
@@ -130,9 +171,17 @@ def run_exercise_evaluation(exercise_num: int,
     print('\nGenerazione plot ...')
     suffix = f' -- Exercise {exercise_num:03d} [{modality}]'
 
-    all_trajs = {'Baseline': baseline, 'Canonical': canonical, **bc_trajs}
+    all_trajs = {
+        'Baseline'      : baseline,
+        'Canonical'     : canonical,
+        'CanonicalShape': canonical_shape,
+        **{k: v for k, v in bc_trajs.items() if v is not None},
+    }
+    # rimuovi None (canonical/canonicalShape mancanti)
+    all_trajs = {k: v for k, v in all_trajs.items() if v is not None}
 
-    plot_degradation_chain(results, human_demos_dtw, output_dir, exercise_num, modality)
+    plot_degradation_chain(results, output_dir, exercise_num, modality,
+                           arch_variance=arch_variance)
     plot_velocity_profile(all_trajs, output_dir, baseline=baseline)
 
     # Plot cartesiani
@@ -140,8 +189,12 @@ def run_exercise_evaluation(exercise_num: int,
     plot_cartesian_velocity(all_trajs, output_dir, baseline=baseline)
     plot_3d_trajectories(all_trajs, output_dir, active_side=active_side)
 
-    # Heatmap riassuntiva finale
-    plot_summary_heatmap(results, output_dir, suffix, active_side=active_side)
+    # Heatmap riassuntiva finale + spider chart
+    plot_summary_heatmap(results, output_dir, suffix,
+                         active_side=active_side, human_bounds=human_bounds,
+                         arch_variance=arch_variance)
+    plot_spider_chart(results, output_dir, suffix,
+                      active_side=active_side, human_bounds=human_bounds)
 
     print_summary(results, f'Exercise {exercise_num:03d} [{modality}]')
     print(f'\n  Output → {output_dir}')

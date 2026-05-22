@@ -79,12 +79,13 @@ VELOCITY_JOINTS: Dict[str, int] = {
 # Palette colori (condivisa tra tutti i plot)
 # ---------------------------------------------------------------------------
 PALETTE: Dict[str, str] = {
-    'Human demos': '#e74c3c',
-    'Canonical'  : '#e67e22',
-    'MLP'        : '#3498db',
-    'GRU'        : '#9b59b6',
-    'Transformer': '#1abc9c',
-    'Stereo'     : '#2ecc71',
-    'Mixed'      : '#f39c12',
-    'Mono'       : '#8e44ad',
+    'Human demos'   : '#e74c3c',
+    'Canonical'     : '#e67e22',   # DBA standard  — arancione
+    'CanonicalShape': '#16a085',   # ShapeDBA      — verde acqua
+    'MLP'           : '#3498db',
+    'GRU'           : '#9b59b6',
+    'Transformer'   : '#1abc9c',
+    'Stereo'        : '#2ecc71',
+    'Mixed'         : '#f39c12',
+    'Mono'          : '#8e44ad',
 }

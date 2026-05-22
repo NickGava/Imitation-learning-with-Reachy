@@ -12,20 +12,25 @@ Optimizer    : Adam (lr=1e-3)
 Early stopping: patience=20 on validation loss
 Noise aug.   : Gaussian noise on state input during training (std=0.1)
 
-K-fold: videos are divided into K folds using a composite subject_video key
-to correctly identify unique videos across multiple subjects.
+K-fold: videos are divided into K folds using a composite subject_video key.
 K is computed as ceil(N_videos * K_FOLDS_RATIO).
 
 --- Input ---
   data/dataset/exercise_XXX/bc_dataset.csv
 
---- Output ---
-  data/dataset/exercise_XXX/MLP/bc_model_fold_0.pth  ...  bc_model_fold_K.pth
-  data/dataset/exercise_XXX/MLP/scaler_fold_0.pkl    ...  scaler_fold_K.pkl
-  data/dataset/exercise_XXX/MLP/loss_curve.png
+--- Output (single run) ---
+  data/dataset/exercise_XXX/n_XX/MLP/bc_model_fold_0.pth  ...
+  data/dataset/exercise_XXX/n_XX/MLP/scaler_fold_0.pkl    ...
+  data/dataset/exercise_XXX/n_XX/MLP/loss_curve.png
+
+--- Output (multi-run, --run N) ---
+  data/dataset/exercise_XXX/n_XX/MLP/run_N/bc_model_fold_0.pth  ...
+  data/dataset/exercise_XXX/n_XX/MLP/run_N/scaler_fold_0.pkl    ...
+  data/dataset/exercise_XXX/n_XX/MLP/run_N/loss_curve.png
 
 Usage:
   py -m bc_approach.MLP.train_bc 1
+  py -m bc_approach.MLP.train_bc 1 --run 2   # training run 2 (different seed)
 '''
 
 import argparse
@@ -195,11 +200,22 @@ def main():
     parser = argparse.ArgumentParser(description='Train BC MLP (k-fold) for one exercise.')
     parser.add_argument('exercise', type=int, help='Exercise number (e.g. 1)')
     parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
+    parser.add_argument('--run', type=int, default=None,
+                        help='Training run index (1-based). Saves to MLP/run_N/ with a '
+                             'different random seed for reproducible independence.')
     args = parser.parse_args()
 
     split_dir    = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}' / split_name(args.n_demos)
     dataset_path = split_dir / 'bc_dataset.csv'
-    output_dir    = split_dir / 'MLP'   # o GRU / Transformer
+
+    # ── Run-aware output directory and seed ──────────────────────────────────
+    if args.run is not None:
+        output_dir    = split_dir / 'MLP' / f'run_{args.run}'
+        effective_seed = RANDOM_SEED + (args.run - 1) * 137
+        print(f'Training run {args.run}  (seed={effective_seed})')
+    else:
+        output_dir    = split_dir / 'MLP'
+        effective_seed = RANDOM_SEED
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'Loading {dataset_path} ...')
@@ -210,13 +226,14 @@ def main():
     df = pd.read_csv(dataset_path)
     print(f'  {len(df)} samples\n')
 
-    # Composite key: uniquely identifies each video across all subjects
     df['video_id'] = df['subject'].astype(str) + '_' + df['video'].astype(str)
 
     X = df[INPUT_COLS].values.astype(np.float32)
     y = df[OUTPUT_COLS].values.astype(np.float32)
 
-    np.random.seed(RANDOM_SEED)
+    np.random.seed(effective_seed)
+    torch.manual_seed(effective_seed)
+
     video_ids = df['video_id'].unique()
     np.random.shuffle(video_ids)
     K_FOLDS = max(2, math.ceil(len(video_ids) * K_FOLDS_RATIO))

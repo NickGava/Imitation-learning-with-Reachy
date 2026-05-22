@@ -8,9 +8,10 @@ come bc_trajectory.csv prima di eseguire la valutazione.
 
 Funzioni pubbliche:
     load_baseline(dataset_dir)                   → np.ndarray | None
-    load_canonical(dataset_dir)                  → np.ndarray | None
-    load_bc_trajectory(dataset_dir, arch)        → np.ndarray | None
-    load_human_demos(landmarks_root, exercise)   → list[np.ndarray]
+    load_canonical(split_dir)                    → np.ndarray | None  (DBA standard)
+    load_canonical_shape(split_dir)              → np.ndarray | None  (ShapeDBA)
+    load_bc_trajectory(split_dir, arch)          → np.ndarray | None  (mean se multi-run)
+    load_bc_runs_variance(split_dir, arch)       → dict[str,float] | None
     start_pose_from_canonical(canonical)         → np.ndarray
     save_results_csv(results, output_dir)
 '''
@@ -59,30 +60,52 @@ def load_baseline(dataset_dir: Path) -> Optional[np.ndarray]:
     return _load_joint_csv(dataset_dir / 'baseline.csv', 'Baseline')
 
 
-def load_canonical(dataset_dir: Path) -> Optional[np.ndarray]:
-    return _load_joint_csv(dataset_dir / 'canonical.csv', 'Canonical')
+def load_canonical(split_dir: Path) -> Optional[np.ndarray]:
+    '''Carica canonical.csv (DBA standard) dalla cartella split.'''
+    return _load_joint_csv(split_dir / 'canonical.csv', 'Canonical')
 
 
-def load_bc_trajectory(dataset_dir: Path, arch: str) -> Optional[np.ndarray]:
+def load_canonical_shape(split_dir: Path) -> Optional[np.ndarray]:
+    '''Carica canonicalShape.csv (ShapeDBA) dalla cartella split.'''
+    return _load_joint_csv(split_dir / 'canonicalShape.csv', 'CanonicalShape')
+
+
+def load_bc_trajectory(split_dir: Path, arch: str) -> Optional[np.ndarray]:
     '''
-    Carica la traiettoria BC pre-generata da test_bc.py.
-
-    Path atteso: dataset_dir / arch / 'bc_trajectory.csv'
-    Esempio:     data/dataset/exercise_021/MLP/bc_trajectory.csv
-
-    Se il file non esiste, stampa un avviso e restituisce None.
-    Esegui prima il test_bc.py corrispondente per generarlo.
+    Carica la traiettoria BC per una architettura.
+    Preferisce bc_trajectory_mean.csv (multi-run) se disponibile,
+    altrimenti cade su bc_trajectory.csv (single-run / backward compat).
     '''
-    path = dataset_dir / arch / 'bc_trajectory.csv'
+    mean_path = split_dir / arch / 'bc_trajectory_mean.csv'
+    if mean_path.exists():
+        return _load_joint_csv(mean_path, label=f'{arch} (mean runs)')
+    path = split_dir / arch / 'bc_trajectory.csv'
     return _load_joint_csv(path, label=arch)
+
+
+def load_bc_runs_variance(split_dir: Path, arch: str) -> Optional[Dict[str, float]]:
+    '''
+    Legge runs_metrics.csv e restituisce la std per ogni metrica scalare.
+    Ritorna None se il file non esiste (modalità single-run).
+    '''
+    path = split_dir / arch / 'runs_metrics.csv'
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if df.shape[0] < 2:
+        return None   # serve almeno 2 run per avere una std significativa
+    scalar_cols = [c for c in df.columns if c != 'run']
+    return {col: float(df[col].std())
+            for col in scalar_cols
+            if not df[col].isna().all()}
 
 
 def load_human_demos(landmarks_root: Path,
                       exercise_num: int,
                       n_demos: int = 55) -> List[np.ndarray]:
     '''
-    Carica i joint_ik.csv delle demo umane per un dato esercizio,
-    limitandosi ai primi K soggetti (stessi usati per il training dello split).
+    Carica i joint_ik.csv delle demo umane per un dato esercizio.
+    Usate come riferimento per i bounds delle metriche (non mostrate nei grafici).
 
     n_demos : 10 -> 2 soggetti, 25 -> 5, 55 -> tutti 11
     '''

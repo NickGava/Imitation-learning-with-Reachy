@@ -62,99 +62,57 @@ def _side_joint_filter(active_side):
 # ============================================================================
 
 def plot_degradation_chain(results: Dict,
-                           human_demos_dtw: List[float],
                            output_dir: Path,
                            exercise_num: int,
-                           modality: str) -> None:
+                           modality: str,
+                           arch_variance: Optional[Dict] = None) -> None:
     '''
-    Degradation chain con box plot per le Human demos e marker singoli
-    per Canonical, MLP, GRU, Transformer.
-
-    human_demos_dtw: lista di cart_dtw (m) calcolato per ogni demo individuale
-    vs baseline. Mostra la distribuzione reale della variabilita umana.
-
-    Risponde alla domanda: il BC cade dentro, sotto o sopra la distribuzione
-    delle dimostrazioni umane?
+    Degradation chain: bar chart del DTW cartesiano (m) vs baseline.
+    Se arch_variance è disponibile, aggiunge errorbar (±std) sulle barre
+    delle architetture BC.
     '''
-    import random
-    CHAIN_ORDER = ['Canonical', 'MLP', 'GRU', 'Transformer']
-    methods     = [m for m in CHAIN_ORDER if m in results and 'cart_dtw' in results[m]]
+    CHAIN_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
+    methods = [m for m in CHAIN_ORDER if m in results and 'cart_dtw' in results[m]]
 
-    if not methods and not human_demos_dtw:
+    if not methods:
         return
 
-    # --- Setup figure ---
-    n_methods = len(methods)
-    fig, ax   = plt.subplots(figsize=(3 + n_methods * 1.6, 6))
+    values = [results[m]['cart_dtw'] for m in methods]
+    colors = [PALETTE.get(m, '#95a5a6') for m in methods]
 
-    # --- Box plot Human demos ---
-    if human_demos_dtw:
-        bp = ax.boxplot(
-            [human_demos_dtw],
-            positions=[0],
-            widths=0.45,
-            patch_artist=True,
-            boxprops=dict(facecolor=PALETTE.get('Human demos', '#e74c3c'),
-                          alpha=0.25, linewidth=1.5,
-                          edgecolor=PALETTE.get('Human demos', '#e74c3c')),
-            medianprops=dict(color=PALETTE.get('Human demos', '#e74c3c'),
-                             linewidth=2.5),
-            whiskerprops=dict(color=PALETTE.get('Human demos', '#e74c3c'),
-                              linewidth=1.5, linestyle='--'),
-            capprops=dict(color=PALETTE.get('Human demos', '#e74c3c'),
-                          linewidth=1.5),
-            flierprops=dict(marker='o', markerfacecolor='none',
-                            markeredgecolor=PALETTE.get('Human demos', '#e74c3c'),
-                            markersize=4, alpha=0.5),
-            showfliers=True,
-        )
-        # Jitter scatter per tutti i punti
-        random.seed(42)
-        jitter = [random.uniform(-0.15, 0.15) for _ in human_demos_dtw]
-        ax.scatter(jitter, human_demos_dtw,
-                   color=PALETTE.get('Human demos', '#e74c3c'),
-                   alpha=0.30, s=18, zorder=3)
-        # Media
-        mean_val = float(np.mean(human_demos_dtw))
-        ax.scatter([0], [mean_val],
-                   color=PALETTE.get('Human demos', '#e74c3c'),
-                   marker='D', s=55, zorder=5)
-        ax.annotate(f'{mean_val:.2f}m', xy=(0, mean_val),
-                    xytext=(10, 0), textcoords='offset points',
-                    ha='left', va='center', fontsize=8,
-                    color=PALETTE.get('Human demos', '#e74c3c'),
-                    fontweight='bold')
+    # Errorbar (std): solo per architetture con varianza disponibile
+    yerr = []
+    for m in methods:
+        var = (arch_variance or {}).get(m, None)
+        std = var.get('cart_dtw', np.nan) if var else np.nan
+        yerr.append(std if not np.isnan(std) else 0.0)
+    has_err = any(e > 0 for e in yerr)
 
-    # --- Marker singoli per metodi appresi ---
-    for i, method in enumerate(methods, start=1):
-        val   = results[method]['cart_dtw']
-        color = PALETTE.get(method, '#95a5a6')
-        ax.scatter([i], [val],
-                   color=color, marker='D', s=120, zorder=5, clip_on=False)
-        ax.annotate(f'{val:.2f}m', xy=(i, val),
-                    xytext=(10, 0), textcoords='offset points',
-                    ha='left', va='center', fontsize=9,
-                    color=color, fontweight='bold')
+    fig, ax = plt.subplots(figsize=(max(5, len(methods) * 1.6), 5))
 
-    # --- Asse x ---
-    x_labels = (['Human demos\n(N=55, box+scatter)'] if human_demos_dtw else []) + methods
-    x_pos    = list(range(len(x_labels)))
-    ax.set_xticks(x_pos if human_demos_dtw else list(range(1, n_methods + 1)))
-    ax.set_xticklabels(x_labels, fontsize=10)
+    bars = ax.bar(methods, values,
+                  yerr=yerr if has_err else None,
+                  error_kw=dict(ecolor='#555', capsize=5, capthick=1.5, elinewidth=1.5),
+                  color=colors, edgecolor='white',
+                  linewidth=1.5, alpha=0.88, width=0.55)
 
-    # --- Linea orizzontale alla mediana delle demo (riferimento visivo) ---
-    if human_demos_dtw:
-        med = float(np.median(human_demos_dtw))
-        ax.axhline(med, color=PALETTE.get('Human demos', '#e74c3c'),
-                   linewidth=1.0, linestyle=':', alpha=0.5,
-                   label=f'Human demos median ({med:.2f}m)')
+    for bar, val, err in zip(bars, values, yerr):
+        label = f'{val:.3f} m'
+        if has_err and err > 0:
+            label += f'\n±{err:.3f}'
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + max(values) * 0.015 + (err if has_err else 0),
+                label,
+                ha='center', va='bottom', fontsize=9, fontweight='bold',
+                color=bar.get_facecolor())
 
-    ax.set_ylabel('DTW cartesiano vs baseline  (m)  (lower=better)', fontsize=11)
+    ax.set_ylabel('DTW cartesiano vs baseline  (m)  ↓ migliore', fontsize=11)
     ax.set_title(
-        f'Degradation Chain -- Exercise {exercise_num:03d} [{modality}]\n'
-        'DTW cartesiana (m) -- box = distribuzione Human demos',
+        f'Degradation Chain — Exercise {exercise_num:03d} [{modality}]\n'
+        'DTW cartesiana (m) rispetto alla baseline'
+        + ('  |  errorbar = std tra training run' if has_err else ''),
         fontsize=12, fontweight='bold')
-    ax.set_xlim(-0.6, (n_methods + 0.6) if human_demos_dtw else (n_methods - 0.4 + 0.6))
+    ax.set_ylim(0, max(v + e for v, e in zip(values, yerr)) * 1.25)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(axis='y', alpha=0.3)
@@ -821,92 +779,258 @@ def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
 
 def plot_summary_heatmap(results: Dict, output_dir: Path,
                           title_suffix: str = '',
-                          active_side: str = 'both') -> None:
+                          active_side: str = 'both',
+                          human_bounds: Optional[Dict] = None,
+                          arch_variance: Optional[Dict] = None) -> None:
     '''
     Heatmap riassuntiva: righe = metodi, colonne = metriche scalari chiave.
-    Le metriche RMSE cartesiane si adattano al braccio attivo.
-    '''
-    s = active_side
-    wrist_key = 'cart_rmse_l_wrist' if s == 'left'  else ('cart_rmse_r_wrist' if s == 'right' else 'cart_rmse_r_wrist')
-    elbow_key = 'cart_rmse_l_elbow' if s == 'left'  else ('cart_rmse_r_elbow' if s == 'right' else 'cart_rmse_r_elbow')
-    wrist_lbl = 'RMSE\nLw (m)'     if s == 'left'  else ('RMSE\nRw (m)'      if s == 'right' else 'RMSE\nRw (m)')
-    elbow_lbl = 'RMSE\nLe (m)'     if s == 'left'  else ('RMSE\nRe (m)'      if s == 'right' else 'RMSE\nRe (m)')
 
+    Bounds per colonna (da human_bounds, calcolati sulle demo individuali):
+      - verde = best human demo performance su quella metrica
+      - rosso = worst human demo performance
+      - grigio = oltre il bound peggiore
+      - Pearson: fisso [0, 1]
+    Human demos non appaiono come riga.
+    '''
+    if human_bounds is None:
+        human_bounds = {}
+    s = active_side
+    wrist_key = 'cart_rmse_l_wrist' if s == 'left' else 'cart_rmse_r_wrist'
+    elbow_key = 'cart_rmse_l_elbow' if s == 'left' else 'cart_rmse_r_elbow'
+    peak_key  = 'cart_peak_l_wrist' if s == 'left' else 'cart_peak_r_wrist'
+    wrist_lbl = 'RMSE\nLw (m)'     if s == 'left' else 'RMSE\nRw (m)'
+    elbow_lbl = 'RMSE\nLe (m)'     if s == 'left' else 'RMSE\nRe (m)'
+    peak_lbl  = 'Peak\nLw (m)'     if s == 'left' else 'Peak\nRw (m)'
+
+    # (key, label, lower_is_better, format, bound_type)
     METRICS = [
-        ('cart_dtw',  'DTW\n(m)',       True,  '{:.2f}'),
-        (wrist_key,    wrist_lbl,        True,  '{:.4f}'),
-        (elbow_key,    elbow_lbl,        True,  '{:.4f}'),
-        ('rmse_mean', 'RMSE\n(joint)',   True,  '{:.2f}'),
-        ('cart_pearson_mean', 'Pearson\ncart', False, '{:.3f}'),
-        ('pearson_mean',  'Pearson\njoint',  False, '{:.3f}'),
+        ('cart_dtw',          'DTW\n(m)',        True,  '{:.3f}', 'human'),
+        (wrist_key,           wrist_lbl,         True,  '{:.4f}', 'human'),
+        (elbow_key,           elbow_lbl,         True,  '{:.4f}', 'human'),
+        ('rmse_mean',         'RMSE\njoint (°)', True,  '{:.2f}', 'human'),
+        (peak_key,            peak_lbl,          True,  '{:.4f}', 'human'),
+        ('smoothness',        'Smooth\n(↑)',     False, '{:.4f}', 'human'),
+        ('cart_pearson_mean', 'Pearson\ncart',   False, '{:.3f}', 'fixed_01'),
+        ('pearson_mean',      'Pearson\njoint',  False, '{:.3f}', 'fixed_01'),
     ]
 
-    METHOD_ORDER = ['Human demos', 'Canonical', 'MLP', 'GRU', 'Transformer']
+    METHOD_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
     methods = [m for m in METHOD_ORDER if m in results] + \
-              [m for m in results if m not in METHOD_ORDER]
+              [m for m in results if m not in METHOD_ORDER and m != 'Human demos']
 
-    # Costruisci matrice dati (n_methods  n_metrics)
-    data     = np.full((len(methods), len(METRICS)), np.nan)
+    if not methods:
+        return
+
+    human_r = results.get('Human demos', {})  # usato solo come fallback
+    n_m, n_c = len(methods), len(METRICS)
+
+    # Matrice dati e scores
+    data   = np.full((n_m, n_c), np.nan)
+    scores = np.full((n_m, n_c), np.nan)   # [0,1]=valid, -1=out-of-bounds
+
     for i, m in enumerate(methods):
-        for j, (key, _, _, _) in enumerate(METRICS):
+        for j, (key, _, lib, _, bt) in enumerate(METRICS):
             val = results[m].get(key, np.nan)
-            if not np.isnan(val):
-                data[i, j] = val
+            if np.isnan(val):
+                continue
+            data[i, j] = val
+            best, worst = _get_metric_bounds(key, lib, bt, human_bounds)
+            scores[i, j] = _score_value(val, best, worst, lib)
 
-    # Normalizza ogni colonna in [0,1] dove 1 = migliore
-    scores = np.full_like(data, np.nan)
-    for j, (_, _, lower_is_better, _) in enumerate(METRICS):
-        col      = data[:, j]
-        finite   = col[np.isfinite(col)]
-        if len(finite) < 2 or np.ptp(finite) < 1e-12:
-            scores[:, j] = 0.5
-            continue
-        norm = (col - np.nanmin(col)) / np.ptp(finite)
-        scores[:, j] = (1 - norm) if lower_is_better else norm
+    col_labels = [lbl for _, lbl, _, _, _ in METRICS]
+    formats    = [fmt for _, _, _, fmt, _ in METRICS]
 
-    col_labels = [label for _, label, _, _ in METRICS]
-    formats    = [fmt   for _, _, _, fmt   in METRICS]
+    fig, ax = plt.subplots(figsize=(max(10, n_c * 1.5), max(3.5, n_m * 1.1)))
 
-    fig, ax = plt.subplots(figsize=(max(8, len(METRICS) * 1.6),
-                                    max(3, len(methods) * 0.9)))
-    im = ax.imshow(scores, aspect='auto', cmap='RdYlGn', vmin=0, vmax=1)
+    # Imshow solo per celle valide [0,1]
+    display = np.where(scores == -1, np.nan, scores)
+    im = ax.imshow(display, aspect='auto', cmap='RdYlGn', vmin=0, vmax=1)
 
-    # Etichette assi
-    ax.set_xticks(range(len(col_labels)))
+    ax.set_xticks(range(n_c))
     ax.set_xticklabels(col_labels, fontsize=10)
-    ax.set_yticks(range(len(methods)))
+    ax.set_yticks(range(n_m))
     ax.set_yticklabels(methods, fontsize=11)
     ax.xaxis.set_label_position('top')
     ax.xaxis.tick_top()
 
-    # Valori numerici nelle celle
-    for i in range(len(methods)):
+    for i in range(n_m):
         for j, fmt in enumerate(formats):
-            val = data[i, j]
-            txt = fmt.format(val) if not np.isnan(val) else ''
+            key   = METRICS[j][0]
+            val   = data[i, j]
             score = scores[i, j]
-            color = 'white' if (score < 0.25 or score > 0.75) else 'black'
-            ax.text(j, i, txt, ha='center', va='center',
-                    fontsize=9, color=color, fontweight='bold')
+            if np.isnan(val):
+                continue
 
-    # Colorbar
+            # ±std from arch_variance (only for BC architectures, not canonical)
+            method  = methods[i]
+            var_d   = (arch_variance or {}).get(method, None) if arch_variance else None
+            std_val = var_d.get(key, np.nan) if var_d else np.nan
+            std_txt = f'±{fmt.format(std_val)}' if not np.isnan(std_val) else ''
+
+            val_txt  = fmt.format(val)
+            cell_txt = f'{val_txt}\n{std_txt}' if std_txt else val_txt
+
+            if score == -1.0:
+                ax.add_patch(plt.Rectangle(
+                    (j - 0.5, i - 0.5), 1, 1,
+                    fill=True, facecolor='#888888',
+                    edgecolor='white', linewidth=1.5, zorder=2))
+                ax.text(j, i, cell_txt,
+                        ha='center', va='center', fontsize=8,
+                        color='white', fontweight='bold', zorder=3,
+                        linespacing=1.3)
+            else:
+                txt_color = 'white' if (score < 0.25 or score > 0.75) else 'black'
+                ax.text(j, i, cell_txt,
+                        ha='center', va='center', fontsize=8.5,
+                        color=txt_color, fontweight='bold',
+                        linespacing=1.3)
+
     cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
     cbar.set_label('Performance  (verde = migliore)', fontsize=9)
     cbar.set_ticks([0, 0.5, 1])
-    cbar.set_ticklabels(['peggiore', 'medio', 'migliore'], fontsize=8)
+    cbar.set_ticklabels(['peggior\ndemo', 'medio', 'miglior\ndemo'], fontsize=8)
 
     ax.set_title(
-        f'Riepilogo Metriche{title_suffix}',
-        fontsize=13, fontweight='bold', pad=18)
+        f'Riepilogo Metriche{title_suffix}\n'
+        '(verde/rosso = range demo umane  |  grigio = oltre il limite peggiore)',
+        fontsize=12, fontweight='bold', pad=18)
 
-    # Linee di separazione tra metodi
-    for i in range(len(methods) - 1):
+    for i in range(n_m - 1):
         ax.axhline(i + 0.5, color='white', linewidth=1.5)
-    for j in range(len(col_labels) - 1):
+    for j in range(n_c - 1):
         ax.axvline(j + 0.5, color='white', linewidth=1.5)
 
     fig.tight_layout()
     p = output_dir / 'plot_summary_heatmap.png'
+    fig.savefig(p, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'  Saved -> {p.name}')
+
+# ============================================================================
+# Shared helpers per heatmap + spider (bounds basati su Human demos)
+# ============================================================================
+
+def _get_metric_bounds(key: str, lower_is_better: bool,
+                       bound_type: str, human_bounds: Dict) -> tuple:
+    '''
+    Returns (best, worst) per una metrica.
+      bound_type='human'    → (best_human_demo, worst_human_demo) da human_bounds
+      bound_type='fixed_01' → (1.0, 0.0) per Pearson
+    Se la chiave non è in human_bounds, ritorna (nan, nan) → celle grigie.
+    '''
+    if bound_type == 'fixed_01':
+        return (1.0, 0.0)
+    best, worst = human_bounds.get(key, (np.nan, np.nan))
+    return (best, worst)
+
+
+def _score_value(val: float, best: float, worst: float,
+                 lower_is_better: bool) -> float:
+    '''
+    Normalizza val in [0, 1] dove:
+      1 = best human demo performance  (verde)
+      0 = worst human demo performance (rosso)
+    Ritorna -1 se val è oltre il bound peggiore (cella grigia).
+    Ritorna np.nan se val, best o worst sono NaN.
+    '''
+    if np.isnan(val) or np.isnan(best) or np.isnan(worst):
+        return np.nan
+    span = abs(best - worst)
+    if span < 1e-12:
+        return 0.5
+    if lower_is_better:
+        # best=min, worst=max  →  score = (worst - val) / span
+        if val > worst:
+            return -1.0   # grey
+        return float(np.clip((worst - val) / span, 0.0, 1.0))
+    else:
+        # best=max, worst=min  →  score = (val - worst) / span
+        if val < worst:
+            return -1.0   # grey
+        return float(np.clip((val - worst) / span, 0.0, 1.0))
+
+
+def plot_spider_chart(results: Dict, output_dir: Path,
+                      title_suffix: str = '',
+                      active_side: str = 'both',
+                      human_bounds: Optional[Dict] = None) -> None:
+    '''
+    Spider / radar chart — tutte metriche cartesiane (lato attivo).
+    Assi: DTW cart, RMSE wrist, RMSE elbow, Peak wrist, Pearson cart.
+
+    Score in [0, 1]:
+      1 = miglior demo umana su quella metrica  (verde esterno)
+      0 = peggior demo umana                    (rosso centro)
+    Valori fuori bound → clampati a 0. Human demos non mostrate.
+    '''
+    if human_bounds is None:
+        human_bounds = {}
+
+    s         = active_side
+    wrist_key = 'cart_rmse_l_wrist' if s == 'left' else 'cart_rmse_r_wrist'
+    elbow_key = 'cart_rmse_l_elbow' if s == 'left' else 'cart_rmse_r_elbow'
+    peak_key  = 'cart_peak_l_wrist' if s == 'left' else 'cart_peak_r_wrist'
+    wrist_lbl = 'RMSE\nLw (m)'     if s == 'left' else 'RMSE\nRw (m)'
+    elbow_lbl = 'RMSE\nLe (m)'     if s == 'left' else 'RMSE\nRe (m)'
+    peak_lbl  = 'Peak\nLw (m)'     if s == 'left' else 'Peak\nRw (m)'
+
+    SPIDER_METRICS = [
+        # (key, label, lower_is_better, bound_type)
+        ('cart_dtw',          'DTW\ncart (m)',    True,  'human'),
+        (wrist_key,           wrist_lbl,          True,  'human'),
+        (elbow_key,           elbow_lbl,          True,  'human'),
+        (peak_key,            peak_lbl,           True,  'human'),
+        ('cart_pearson_mean', 'Pearson\ncart',    False, 'fixed_01'),
+    ]
+
+    METHOD_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
+    methods = [m for m in METHOD_ORDER if m in results and m != 'Human demos']
+
+    if not methods:
+        return
+
+    N      = len(SPIDER_METRICS)
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    angles += angles[:1]
+    labels  = [lbl for _, lbl, _, _ in SPIDER_METRICS]
+
+    fig, ax = plt.subplots(figsize=(7, 7), subplot_kw=dict(polar=True))
+
+    for method in methods:
+        scores = []
+        for key, _, lib, bt in SPIDER_METRICS:
+            val         = results[method].get(key, np.nan)
+            best, worst = _get_metric_bounds(key, lib, bt, human_bounds)
+            sv          = _score_value(val, best, worst, lib)
+            # out-of-bounds o nan → 0 (al pavimento)
+            if isinstance(sv, float) and not np.isnan(sv) and sv != -1.0:
+                scores.append(float(np.clip(sv, 0.0, 1.0)))
+            else:
+                scores.append(0.0)
+        scores += scores[:1]
+
+        color = PALETTE.get(method, '#7f8c8d')
+        ax.plot(angles, scores, 'o-', linewidth=2.0,
+                color=color, label=method, alpha=0.85)
+        ax.fill(angles, scores, alpha=0.08, color=color)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, fontsize=10.5)
+    ax.set_ylim(0, 1)
+    ax.set_yticks([0.25, 0.50, 0.75, 1.00])
+    ax.set_yticklabels(['0.25\n(worst)', '0.50', '0.75', '1.00\n(best)'],
+                       fontsize=7.5, color='grey')
+    ax.grid(color='grey', linestyle='--', linewidth=0.5, alpha=0.6)
+
+    ax.legend(loc='upper right', bbox_to_anchor=(1.40, 1.18), fontsize=10)
+    ax.set_title(
+        f'Spider Chart — Cartesian Performance{title_suffix}\n'
+        '(1 = miglior demo umana,  0 = peggior demo umana)',
+        fontsize=12, fontweight='bold', pad=22)
+
+    fig.tight_layout()
+    p = output_dir / 'plot_spider_chart.png'
     fig.savefig(p, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f'  Saved -> {p.name}')

@@ -47,7 +47,7 @@ from evaluation_and_comparison._config import (
 )
 
 
-METHOD_ORDER = ['Human demos', 'Canonical', 'MLP', 'GRU', 'Transformer']
+METHOD_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def _grouped_bar_modality(agg: pd.DataFrame, metric: str,
                            ylabel: str, title: str,
                            output_path: Path) -> None:
     """Grouped bar: asse X = architetture, colori = modalita."""
-    methods  = [m for m in ['Canonical'] + list(ARCHITECTURES.keys())
+    methods  = [m for m in ['Canonical', 'CanonicalShape'] + list(ARCHITECTURES.keys())
                 if m in agg['method'].values]
     mods     = list(MODALITY_GROUPS.keys())
     x        = np.arange(len(methods))
@@ -126,7 +126,7 @@ def _line_per_exercise(df: pd.DataFrame, metric: str,
                         output_path: Path) -> None:
     """Line plot: asse X = tipo esercizio (1-5), linee per (metodo x modalita)."""
     ex_types = sorted(df['exercise_type'].unique())
-    methods  = [m for m in ['Canonical'] + list(ARCHITECTURES.keys())
+    methods  = [m for m in ['Canonical', 'CanonicalShape'] + list(ARCHITECTURES.keys())
                 if m in df['method'].values]
     ls_map   = {'Stereo': '-', 'Mixed': '--', 'Mono': ':'}
 
@@ -257,7 +257,7 @@ def run_modality_analysis(n_demos: int = 55) -> None:
           f'{"RMSE Lw":>8}  {"Pearson":>8}')
     print(f'  {"-"*60}')
     for mod in MODALITY_GROUPS:
-        for method in ['Canonical'] + list(ARCHITECTURES.keys()):
+        for method in ['Canonical', 'CanonicalShape'] + list(ARCHITECTURES.keys()):
             row = agg[(agg['modality'] == mod) & (agg['method'] == method)]
             if row.empty:
                 continue

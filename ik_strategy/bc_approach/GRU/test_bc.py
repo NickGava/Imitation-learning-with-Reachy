@@ -471,11 +471,15 @@ def main():
                         help=f'Consecutive frames below threshold before stopping '
                              f'(default: {STOP_WINDOW}).')
     parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
+    parser.add_argument('--run', type=int, default=None,
+                    help='Training run index. If set, loads from ARCH/run_N/.')
+
     args = parser.parse_args()
 
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}'
     split_dir    = exercise_dir / split_name(args.n_demos)
-    model_dir    = split_dir / 'GRU'           # o GRU / Transformer
+    _base_dir    = split_dir / 'GRU'           # o GRU / Transformer
+    model_dir = _base_dir / f'run_{args.run}' if args.run is not None else _base_dir
     plot_path    = split_dir / 'plots' / 'bc_GRU.png'
 
     ensemble   = load_ensemble(model_dir)
@@ -514,7 +518,8 @@ def main():
         all_fk.append((r_fk, l_fk))
 
         if run == 1:
-            joints_path = split_dir / 'plots_joints' / 'joints_GRU.png'
+            run_sfx     = f'_run{args.run}' if args.run is not None else ''
+            joints_path = split_dir / 'plots_joints' / f'joints_GRU{run_sfx}.png'
             plot_joints_trajectory(q_traj, args.exercise, joints_path)
             traj_path = model_dir / 'bc_trajectory.csv'
             pd.DataFrame(q_traj, columns=JOINT_COLS).to_csv(traj_path, index=False)
