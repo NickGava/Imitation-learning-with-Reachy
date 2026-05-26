@@ -19,7 +19,7 @@ Pipeline per arm:
        Upper arm (shoulder -> elbow): REACHY_UPPER_ARM = 0.280 m
        Forearm   (elbow   -> wrist) : REACHY_FOREARM   = 0.250 m
 
-  4. Gripper fixed at 0 (hand landmarks not tracked)
+  4. Gripper fixed at 0
 
 Head: fixed neutral gaze point from HEAD_NEUTRAL config (no face tracking).
 
@@ -43,7 +43,6 @@ _ARM_COLS = [
     'elbow_x', 'elbow_y', 'elbow_z',
     'wrist_x', 'wrist_y', 'wrist_z',
     'gripper_angle',
-    # hand orientation quaternion removed (gripper fixed at 0, orientation unused)
 ]
 
 # Final combined output header
@@ -91,6 +90,7 @@ def _build_torso_rotation_matrix(l_sh: np.ndarray, r_sh: np.ndarray, l_hip: np.n
 
     return np.column_stack([x, y, z])      # columns = Reachy axes in world frame
 
+
 # ---------------------------------------------------------------------------
 # Torso frame pre-computation
 # ---------------------------------------------------------------------------
@@ -112,6 +112,7 @@ def _build_all_torso_frames(df_pose: pd.DataFrame) -> list:
         origin = (l_sh + r_sh) * 0.5
         frames.append((R, origin))
     return frames
+
 
 # ---------------------------------------------------------------------------
 # Per-arm mapping
@@ -153,10 +154,11 @@ def _map_arm(df_pose: pd.DataFrame, side: str, torso_frames: list) -> pd.DataFra
             'sh_x':          sh_out[0],    'sh_y':    sh_out[1],    'sh_z':    sh_out[2],
             'elbow_x':       elbow_out[0], 'elbow_y': elbow_out[1], 'elbow_z': elbow_out[2],
             'wrist_x':       wrist_out[0], 'wrist_y': wrist_out[1], 'wrist_z': wrist_out[2],
-            'gripper_angle': 0.0,          # fixed: hand landmarks not available
+            'gripper_angle': 0.0,          # fixed
         })
 
     return pd.DataFrame(rows)[['frame', 'timestamp'] + _ARM_COLS]
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -168,7 +170,7 @@ def main():
         print(f"Error: folder not found -> {folder}")
         return
 
-    # --- Load and validate pose ---
+    # __________ Load and validate pose __________
     pose_path = folder / "pose_cleaned.csv"
     if not pose_path.exists():
         print(f"Error: pose_cleaned.csv not found -> {pose_path}")
@@ -183,10 +185,10 @@ def main():
     df_pose  = df_pose.dropna(subset=pose_required).reset_index(drop=True)
     print(f"\nPose: {len(df_pose)} valid frames (dropped {n_before - len(df_pose)})\n")
 
-    # --- Pre-compute torso frames ---
+    # __________ Pre-compute torso frames __________
     torso_frames = _build_all_torso_frames(df_pose)
 
-    # --- Process both arms ---
+    # __________ Process both arms __________
     arm_dfs = {}
     for side in ('right', 'left'):
         print(f"--- {side} arm ---")
@@ -194,7 +196,7 @@ def main():
         arm_dfs[side] = df_arm
         print(f"rows mapped: {len(df_arm)}")
 
-    # --- Merge arms and fixed head into a single DataFrame ---
+    # __________ Merge arms and fixed head into a single DataFrame __________
     df_base = df_pose[['frame', 'timestamp']].copy()
 
     for side, prefix in [('right', 'r'), ('left', 'l')]:
@@ -202,7 +204,7 @@ def main():
         df_side = df_side.rename(columns={c: f'{prefix}_{c}' for c in _ARM_COLS})
         df_base = pd.merge(df_base, df_side, on='frame', how='left')
 
-    # Head: fixed neutral gaze point (no face tracking)
+    # __________ Head: fixed neutral gaze point (no face tracking) __________ 
     df_base['head_x'] = HEAD_NEUTRAL[0]
     df_base['head_y'] = HEAD_NEUTRAL[1]
     df_base['head_z'] = HEAD_NEUTRAL[2]

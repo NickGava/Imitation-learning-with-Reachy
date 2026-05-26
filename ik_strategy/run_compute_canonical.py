@@ -2,13 +2,12 @@
 run_compute_canonical.py
 =============================================================================
 Interactive script to compute canonical trajectories for one or more
-exercises using ShapeDBA. Saves results in the appropriate split subfolder.
+exercises using DBA and ShapeDBA. Saves results in the appropriate split subfolder.
 
 Usage:
   py run_compute_canonical.py
   py run_compute_canonical.py --exercise 1
   py run_compute_canonical.py --exercise 1 --n-demos 10
-  py run_compute_canonical.py --exercise 1 --n-demos 25
 
 When prompted, type 'a' instead of a number to process all exercises.
 n-demos controls which subjects are used (10->2 subjects, 25->5, 55->11).
@@ -76,19 +75,16 @@ def _selected_subject_nums(landmarks_root: Path, n_demos: int) -> list:
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compute canonical trajectories via ShapeDBA.")
-    parser.add_argument('--exercise', type=int, default=None,
-                        help='Exercise number (e.g. 1). Omit to be prompted.')
-    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS,
-                        help='Split da usare: 10=2 soggetti, 25=5, 55=11 (default: 55).')
+    parser = argparse.ArgumentParser(description="Compute canonical trajectories via ShapeDBA.")
+    parser.add_argument('--exercise', type=int, default=None, help='Exercise number (e.g. 1). Omit to be prompted.')
+    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS, help='Splits: 10 = 2 subjects, 25 = 5, 55 = 11 (default: 55).')
     args = parser.parse_args()
 
     exercise_numbers = _parse_inputs(args)
     landmarks_root   = DATA_ROOT / 'landmarks'
     dataset_root     = DATA_ROOT / 'dataset'
 
-    # Seleziona i soggetti per questo split
+    # __________ Selects the subjects for the specified split __________
     selected_nums = _selected_subject_nums(landmarks_root, args.n_demos)
 
     print(f'\nExercises     : {exercise_numbers}')
@@ -100,6 +96,7 @@ def main():
     ok_list   = []
     fail_list = []
 
+    # __________ Process the exercise(s) __________
     for ex_num in exercise_numbers:
         ex_name   = f'exercise_{ex_num:03d}'
         spl_name  = split_name(args.n_demos)
@@ -121,7 +118,7 @@ def main():
             print(f'  [OK] {ex_name} completed in {time.time() - t0:.1f}s')
             ok_list.append(ex_name)
 
-            # --- Plot canonical FK (salvato nel split_dir) ---
+            # __________ Plot canonical FK __________
             canonical_path = split_dir / 'canonical.csv'
             plot_dir       = split_dir / 'plots'
             joints_dir     = split_dir / 'plots_joints'
@@ -146,7 +143,7 @@ def main():
             except Exception as e:
                 print(f'  [WARN] Plot failed for {ex_name}: {e}')
 
-            # --- Plot canonicalShape FK ---
+            # __________ Plot canonicalShape FK __________
             canonical_shape_path = split_dir / 'canonicalShape.csv'
             try:
                 trajectory_shape = _load_trajectory(canonical_shape_path)

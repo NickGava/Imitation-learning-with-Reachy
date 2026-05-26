@@ -1,22 +1,27 @@
 '''
 run_simulation.py
 =============================================================================
-Riproduce qualsiasi traiettoria su Reachy leggendo un CSV pre-calcolato.
-Nessuna inference live: tutto il calcolo e' gia' stato fatto da test_bc.py.
+Reproduces any trajectory on Reachy, reading it from a pre-computed CSV.
+No inference live: for BC the computation has already been done in test_bc.py
 
 Modes:
-  video       — riproduce joint_ik.csv da landmarks
-                (richiede --subject, --exercise, --video)
-  baseline    — riproduce baseline.csv
-                (richiede --exercise)
-  canonical   — riproduce n_XX/canonical.csv
-                (richiede --exercise, --n-demos)
-  mlp         — riproduce n_XX/MLP/bc_trajectory.csv
-                (richiede --exercise, --n-demos)
-  gru         — riproduce n_XX/GRU/bc_trajectory.csv
-  transformer — riproduce n_XX/Transformer/bc_trajectory.csv
+  video       - reproduces joint_ik.csv from landmarks (asks for --subject, --exercise, --video)
+  baseline    - reproduces baseline.csv (asks for --exercise)
+  canonical   - reproduces n_XX/canonical.csv (asks for --exercise, --n-demos)
+  mlp         - reproduces n_XX/MLP/bc_trajectory_mean.csv (asks for --exercise, --n-demos)
+  gru         - reproduces n_XX/GRU/bc_trajectory_mean.csv (asks for --exercise, --n-demos)
+  transformer - reproduces n_XX/Transformer/bc_trajectory_mean.csv (asks for --exercise, --n-demos)
 
-Usage:
+Args:
+  --mode      ->    choices=['video', 'baseline', 'canonical', 'mlp', 'gru', 'transformer'], default=None, choose the mode
+  --exercise  ->    type=int, default=None, choose the exercise (all modes)
+  --subject   ->    type=int, default=None, choose the subject (video mode)
+  --video     ->    type=int, default=None, choose the video (video mode)
+  --n-demos   ->    type=int, default=55, choices=[10, 25, 55], split to be used for canonical/BC
+  --runs      ->    type=int, default=1, number of repetitions
+  --host      ->    type=str, default='localhost', ReachySDK host
+  
+Usage exemples:
   py run_simulation.py
   py run_simulation.py --mode canonical  --exercise 21
   py run_simulation.py --mode mlp        --exercise 21 --n-demos 55
@@ -98,7 +103,7 @@ def _build_arm_dicts(reachyC: ReachyController, pose: dict) -> tuple:
 
 
 def _goto_pose(reachyC: ReachyController, pose: dict, duration: float) -> None:
-    '''Muove entrambe le braccia simultaneamente verso la posa target.'''
+    '''Moves both arms to reach the target pose'''
     right_dict, left_dict = _build_arm_dicts(reachyC, pose)
     with ThreadPoolExecutor(max_workers=2) as ex:
         futures = []
@@ -112,7 +117,7 @@ def _goto_pose(reachyC: ReachyController, pose: dict, duration: float) -> None:
 
 
 def _send_q(reachyC: ReachyController, q: np.ndarray) -> None:
-    '''Invia goal_position per tutti i joint (non bloccante, usato a 30Hz).'''
+    '''Sends goal_position for every joint'''
     for i, col in enumerate(JOINT_COLS):
         arm   = reachyC.armRight if col.startswith('r_') else reachyC.armLeft
         joint = arm._joints.get(col)
@@ -126,12 +131,10 @@ def _send_q(reachyC: ReachyController, q: np.ndarray) -> None:
 
 def _load_trajectory(csv_path: Path) -> np.ndarray:
     '''
-    Carica un CSV di traiettoria (JOINT_COLS) come array (T, 16).
-    Funziona sia con baseline/canonical/joint_ik.csv (che hanno colonne extra)
-    sia con bc_trajectory.csv (solo JOINT_COLS, senza timestamp).
+    Loads the CSV of a trajectory (JOINT_COLS) as an array (T, 16).
     '''
     if not csv_path.exists():
-        raise FileNotFoundError(f'Traiettoria non trovata: {csv_path}')
+        raise FileNotFoundError(f'Trajectory not found: {csv_path}')
     df   = pd.read_csv(csv_path)
     cols = [c for c in JOINT_COLS if c in df.columns]
     arr  = df[cols].dropna().values.astype(float)
@@ -145,7 +148,7 @@ def _load_trajectory(csv_path: Path) -> np.ndarray:
 
 
 def _load_start_pose(csv_path: Path) -> dict:
-    '''Primo frame di un CSV come dizionario start pose.'''
+    '''First frame of a CSV as a dict start pose.'''
     if not csv_path.exists():
         return {}
     first = pd.read_csv(csv_path).iloc[0]
@@ -154,8 +157,8 @@ def _load_start_pose(csv_path: Path) -> dict:
 
 def _resolve_paths(mode: str, args) -> tuple[Path, dict]:
     '''
-    Ritorna (traj_path, start_pose) in base al mode e agli argomenti.
-    start_pose e' il dizionario {joint_col: angle} per la posa iniziale.
+    Returns (traj_path, start_pose) depending on mode and arguments.
+    start_pose is the dictonary {joint_col: angle} for the initial pose.
     '''
     exercise_num = args.exercise or _prompt_exercise()
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{exercise_num:03d}'
@@ -182,12 +185,10 @@ def _resolve_paths(mode: str, args) -> tuple[Path, dict]:
     else:  # mlp / gru / transformer
         arch       = mode.upper()
         split_dir  = exercise_dir / split_name(args.n_demos)
-        traj_path  = split_dir / arch / 'bc_trajectory.csv'
-        # start pose dalla canonical (stessa usata da test_bc.py)
+        traj_path  = split_dir / arch / 'bc_trajectory_mean.csv'
+        # start pose of the canonical
         canonical_path = split_dir / 'canonical.csv'
-        start_pose = (_load_start_pose(canonical_path)
-                      if canonical_path.exists()
-                      else _load_start_pose(traj_path))
+        start_pose = (_load_start_pose(canonical_path) if canonical_path.exists() else _load_start_pose(traj_path))
 
     return traj_path, start_pose
 
@@ -196,14 +197,10 @@ def _resolve_paths(mode: str, args) -> tuple[Path, dict]:
 # Playback
 # ---------------------------------------------------------------------------
 
-def _play_trajectory(reachyC: ReachyController,
-                      q_traj: np.ndarray,
-                      start_pose: dict,
-                      runs: int = 1) -> None:
+def _play_trajectory(reachyC: ReachyController, q_traj: np.ndarray, start_pose: dict, runs: int = 1) -> None:
     '''
-    Invia la traiettoria al robot frame-by-frame a ~30 Hz.
-    Prima di ogni run: goto start_pose.
-    Dopo l'ultima run: ritorna a start_pose.
+    Runs the trajectory on the robot frame-by-frame at ~30 Hz.
+    Before every run: goto start_pose.
     '''
     n = len(q_traj)
     for run in range(1, runs + 1):
@@ -226,9 +223,6 @@ def _play_trajectory(reachyC: ReachyController,
         elapsed = time.perf_counter() - t_start
         print(f'Complete. ({elapsed:.1f}s)')
 
-    if start_pose:
-        print('\nReturning to start pose ...')
-        _goto_pose(reachyC, start_pose, GOTO_DURATION)
 
 
 # ---------------------------------------------------------------------------
@@ -267,21 +261,14 @@ def _prompt_video() -> int:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Riproduce una traiettoria pre-calcolata su Reachy.')
-    parser.add_argument('--mode',     choices=VALID_MODES, default=None)
+    parser = argparse.ArgumentParser(description='Reproduces a pre-computed trajectory on Reachy.')
+    parser.add_argument('--mode', choices=VALID_MODES, default=None)
     parser.add_argument('--exercise', type=int, default=None)
-    parser.add_argument('--subject',  type=int, default=None,
-                        help='Solo per modalita video.')
-    parser.add_argument('--video',    type=int, default=None,
-                        help='Solo per modalita video.')
-    parser.add_argument('--n-demos',  type=int, default=55,
-                        choices=N_DEMOS_SPLITS,
-                        help='Split da usare per canonical/BC (default: 55).')
-    parser.add_argument('--runs',     type=int, default=1,
-                        help='Numero di ripetizioni (default: 1).')
-    parser.add_argument('--host',     type=str, default=SIMULATOR_HOST,
-                        help=f'ReachySDK host (default: {SIMULATOR_HOST}).')
+    parser.add_argument('--subject',  type=int, default=None)
+    parser.add_argument('--video',    type=int, default=None)
+    parser.add_argument('--n-demos',  type=int, default=55, choices=N_DEMOS_SPLITS, help='Split to be used for canonical/BC (default: 55).')
+    parser.add_argument('--runs',     type=int, default=1, help='Number of repetitions (default: 1).')
+    parser.add_argument('--host',     type=str, default=SIMULATOR_HOST, help=f'ReachySDK host (default: {SIMULATOR_HOST}).')
     args = parser.parse_args()
 
     mode = args.mode or _prompt_mode()
@@ -293,13 +280,13 @@ def main():
         print(f'Split    : {split_name(args.n_demos)}')
     print()
 
-    # Risolvi paths
+    # __________ Resolve paths __________ 
     traj_path, start_pose = _resolve_paths(mode, args)
 
-    # Carica traiettoria
+    # __________ Load traiettoria __________ 
     q_traj = _load_trajectory(traj_path)
 
-    # Connetti e riproduci
+    # __________ Connect and replay __________
     reachyC = _connect(args.host)
     try:
         _play_trajectory(reachyC, q_traj, start_pose, runs=args.runs)

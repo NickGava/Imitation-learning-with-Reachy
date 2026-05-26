@@ -3,17 +3,17 @@ data_cleaning.py
 =============================================================================
 Data cleaning pipeline for extracted landmarks.
 
-For each video (pose.csv, right_hand.csv, left_hand.csv, face.csv):
+For each video (pose.csv):
   1. Drop incomplete rows: frames where MediaPipe returned no landmarks
-  2. Drop low-visibility frames (pose only): coordinate present but unreliable
+  2. Drop low-visibility frames: coordinate present but unreliable
   3. Jump detection: remove frames with sudden, physically impossible shifts
   4. Smoothing: One Euro Filter on all coordinate columns (visibility excluded)
 
 Input:
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{pose,right_hand,left_hand,face}.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose.csv
 
 Output (same folder):
-  data/landmarks/subject_XXX/exercise_XXX/video_XXX/{pose,right_hand,left_hand,face}_cleaned.csv
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose_cleaned.csv
 
 Note: the 'frame' column retains the original video indices (gaps are expected and intentional, they preserve traceability to the source video).
 '''
@@ -30,7 +30,7 @@ from utilities.config import DATA_ROOT, DEFAULT_FPS
 # ---------------------------------------------------------------------------
 
 # Visibility filter (pose only)
-MIN_VISIBILITY = 0           # frames where any joint is below this are dropped
+MIN_VISIBILITY = 0.5           # frames where any joint is below this are dropped
 
 # Jump detection
 JUMP_FACTOR = 1.5               # drop frame if displacement > JUMP_FACTOR × median displacement
@@ -99,7 +99,7 @@ def _drop_incomplete(df : pd.DataFrame, coord_cols : list) -> pd.DataFrame:
 def _drop_low_visibility(df : pd.DataFrame, vis_cols : list) -> pd.DataFrame:
     """
     Drop rows where any visibility score is below MIN_VISIBILITY.
-    Only called for pose.csv (hand and face CSVs have no visibility columns).
+    Only called for pose.csv.
     """
     if not vis_cols:
         return df
@@ -111,6 +111,7 @@ def _drop_low_visibility(df : pd.DataFrame, vis_cols : list) -> pd.DataFrame:
 
 
 def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
+    """Removes frames with sudden, physically impossible shifts"""
     if len(df) < 2:
         return df
 
@@ -123,10 +124,10 @@ def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
     median = np.median(deltas_no_gap) if len(deltas_no_gap) > 0 else 0
     thresh = JUMP_FACTOR * median
 
-    # Identifica tutti gli indici dove c'è un salto (transizioni anomale)
+    # Identifies every index where there is a jump 
     jump_indices = set(i for i, d in enumerate(deltas) if d > thresh and not gaps[i])
 
-    # Raggruppa indici contigui in blocchi
+    # Groups contiguous index in blocks
     blocks = []
     if jump_indices:
         sorted_jumps = sorted(jump_indices)
@@ -134,22 +135,22 @@ def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
         end   = sorted_jumps[0]
         for idx in sorted_jumps[1:]:
             if idx == end + 1:
-                end = idx           # estendi il blocco corrente
+                end = idx     
             else:
                 blocks.append((start, end))
                 start = end = idx
         blocks.append((start, end))
 
-    # Per ogni blocco: il segnale anomalo va da start+1 a end+1 incluso
-    # Interpola linearmente tra coords[start] (prima del salto) e coords[end+2] (dopo il ritorno)
+    # For every block: the anomalous signal goes from start+1 to end+1 inclusive
+    # Linear interpolation between coords[start] (before the jump) and coords[end+2] (after the jump)
     n_fixed = 0
     for start, end in blocks:
-        left_idx  = start           # ultimo frame buono prima del blocco
-        right_idx = end + 2         # primo frame buono dopo il blocco
+        left_idx  = start           # last "good" frame
+        right_idx = end + 2         # first "good" frame
         if right_idx >= len(coords):
             right_idx = len(coords) - 1
 
-        n_interp = right_idx - left_idx - 1   # numero di frame da sostituire
+        n_interp = right_idx - left_idx - 1   # number of frame that has to be substituted
         for k in range(1, n_interp + 1):
             alpha = k / (n_interp + 1)
             coords[left_idx + k] = (1 - alpha) * coords[left_idx] + alpha * coords[right_idx]
@@ -162,6 +163,8 @@ def _drop_jumps(df: pd.DataFrame, xyz_cols: list) -> pd.DataFrame:
     df = df.copy()
     df[xyz_cols] = coords
     return df
+
+
 # ---------------------------------------------------------------------------
 # Per-file pipeline
 # ---------------------------------------------------------------------------
@@ -172,7 +175,7 @@ def _clean_file(input_path, output_path, is_pose : bool, fps : float):
     Parameters:
         input_path:     path to the raw landmark CSV
         output_path:    path where the cleaned CSV is written (same folder, "_cleaned" suffix)
-        is_pose:        True for pose.csv (enables visibility filtering)
+        is_pose:        enables visibility filtering)
         fps:            frame rate of the source video (used by One Euro Filter)
     """
     df = pd.read_csv(input_path)
@@ -185,17 +188,17 @@ def _clean_file(input_path, output_path, is_pose : bool, fps : float):
 
     print(f"rows loaded: {n_original}")
 
-    # Step 1 — drop incomplete rows
+    # Step 1: drop incomplete rows
     df = _drop_incomplete(df, all_coord)
 
-    # Step 2 — visibility filter (pose only)
+    # Step 2: visibility filter
     if is_pose:
         df = _drop_low_visibility(df, vis_cols)
 
-    # Step 3 — jump detection (on xyz only)
+    # Step 3: jump detection (on xyz only)
     df = _drop_jumps(df, xyz_cols)
 
-    # Step 4 — smoothing (on xyz only, not visibility)
+    # Step 4: smoothing (on xyz only, not visibility)
     df = _apply_one_euro(df, xyz_cols, fps)
     print(f"smoothing applied: One Euro Filter (fps={fps:.1f})")
 

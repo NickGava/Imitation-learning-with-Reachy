@@ -9,9 +9,6 @@ One CSV file is created per video:
 
 Each row represents one frame and includes: frame index and timestamp (seconds).
 
-Each video corresponds to a single movement; context (subject, exercise, video)
-is encoded in the folder path, not in the CSV columns.
-
 Rows with missing landmarks (pose not detected) are written with only the
 metadata columns (frame, timestamp); these incomplete rows are discarded in the
 data cleaning phase.

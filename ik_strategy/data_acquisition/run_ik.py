@@ -80,24 +80,23 @@ JOINTS_IK_HEADER = (
 )
 
 # __________ Tunable __________
-SMOOTH_KERNEL  = 5    # medfilt kernel (dispari) — rimuove spike singoli
+SMOOTH_KERNEL  = 5    # medfilt kernel (odd) - removes single spikes
 SMOOTH_POLY    = 3    # savgol polyorder
 
 def _smooth_joints(arr: np.ndarray) -> np.ndarray:
     """
     Post-process IK joint angle timeseries (N, 8).
     Applies median filter then Savitzky-Golay on each joint independently.
-    Gripper column (index 7) is left untouched (always 0).
     """
     smoothed = arr.copy()
     n = len(arr)
-    SMOOTH_WINDOW  = max(5, int(n*0.2) | 1)   # savgol window  (dispari) — smoothing generale
+    SMOOTH_WINDOW  = max(5, int(n*0.2) | 1)   # savgol window  (odd) - general smoothing 
 
-    # Adatta le window se la sequenza è corta
+    # Adapt the window if the sequence is too short
     kernel = SMOOTH_KERNEL if SMOOTH_KERNEL <= n else (n if n % 2 == 1 else n - 1)
     window = SMOOTH_WINDOW if SMOOTH_WINDOW <= n else kernel
 
-    for j in range(4):   # solo i 4 joint ottimizzati; ultimi 3 restano a 0
+    for j in range(4):   # only 4 joints are optimized; last 3 remain 0
         col = medfilt(arr[:, j], kernel_size=kernel)
         col = savgol_filter(col, window_length=window, polyorder=SMOOTH_POLY)
         smoothed[:, j] = col
@@ -129,8 +128,8 @@ def fk(q_rad: np.ndarray, side: str):
         side  : 'right' or 'left'
 
     Returns:
-        elbow_pos (3,)  — position of elbow in torso frame
-        wrist_pos (3,)  — position of wrist in torso frame
+        elbow_pos (3,)  - position of elbow in torso frame
+        wrist_pos (3,)  - position of wrist in torso frame
     """
     T = np.eye(4)
     elbow_pos = None
@@ -169,8 +168,7 @@ def _cost(q, side, target_elbow, target_wrist, prev_q):
 # ---------------------------------------------------------------------------
 # Multi-start solve for the first frame
 # ---------------------------------------------------------------------------
-def _solve_first_frame(row: pd.Series, prefix: str, side: str,
-                       limits_rad: np.ndarray, n_restarts: int = 20) -> np.ndarray:
+def _solve_first_frame(row: pd.Series, prefix: str, side: str, limits_rad: np.ndarray, n_restarts: int = 20) -> np.ndarray:
     """
     Solves IK for a single frame using multiple random starting points.
     Returns the q (4,) with the lowest final cost.
@@ -214,7 +212,7 @@ def _run_ik_arm(df: pd.DataFrame, p: str, side: str) -> np.ndarray:
     shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch).
 
     Frame 0 is solved via multi-start (20 random restarts) to find a good
-    initial pose without depending on REST_DEG. Subsequent frames warm-start
+    initial pose without depending on a fixed one. Subsequent frames warm-start
     from the previous solution.
 
     Returns (N, 7): first 4 columns are solved joints in degrees,
@@ -222,7 +220,7 @@ def _run_ik_arm(df: pd.DataFrame, p: str, side: str) -> np.ndarray:
     """
     limits_rad = np.deg2rad(JOINT_LIMITS_DEG[side][:4] + np.array([JOINT_LIMIT_PADDING_DEG, -JOINT_LIMIT_PADDING_DEG]))
 
-    # --- Frame 0: multi-start solve ---
+    # __________ Frame 0: multi-start solve __________
     print(f"  Solving first frame (multi-start)...")
     prev_q = _solve_first_frame(df.iloc[0], p, side, limits_rad, n_restarts=20)
 
@@ -230,6 +228,7 @@ def _run_ik_arm(df: pd.DataFrame, p: str, side: str) -> np.ndarray:
     out      = np.zeros((n_frames, _N_SAVED))
     n_warn   = 0
 
+    # __________ Run optimization per frame __________
     for i, (_, row) in enumerate(df.iterrows()):
 
         target_elbow = np.array([row[f'{p}_elbow_x'], row[f'{p}_elbow_y'], row[f'{p}_elbow_z']])
@@ -268,6 +267,7 @@ def _run_ik_arm(df: pd.DataFrame, p: str, side: str) -> np.ndarray:
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    # __________ Inputs __________
     subject_name, exercise_name, video_name = ask_inputs()
     folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
     if not folder.is_dir():
@@ -282,7 +282,7 @@ def main():
     df = pd.read_csv(mapped_path)
     print(f"Loaded {len(df)} frames from {mapped_path.relative_to(DATA_ROOT)}\n")
 
-    # Run IK per arm
+    # __________ Run IK per arm __________
     results = {}
     for side, prefix in [('right', 'r'), ('left', 'l')]:
         print(f"--- {side} arm ---")
@@ -295,7 +295,7 @@ def main():
         results[side] = _smooth_joints(_run_ik_arm(df, prefix, side))
         print(f"IK complete.\n")
 
-    # Assemble output: frame, timestamp, 4 right joints, 4 left joints
+    # __________ Assemble output: frame, timestamp, 4 right joints, 4 left joints __________ 
     out_rows = []
     for i, (_, row) in enumerate(df.iterrows()):
         r = [int(row['frame']), row['timestamp']]

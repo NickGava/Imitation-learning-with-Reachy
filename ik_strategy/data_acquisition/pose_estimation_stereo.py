@@ -1,5 +1,24 @@
 """
-TODO: docstring
+pose_estimation_stereo.py
+=============================================================================
+Main entry point for the landmark extraction pipeline.
+
+Loads two video file (video_L, video_R), runs MediaPipe Pose on each frame and saves the
+detected pose landmarks to CSV via save_landmarks.py.
+Uses stereo depth for the z coordinate.
+
+Controls:
+  P : pause / resume
+  Q : quit
+
+Every frame is processed and saved in a line, each video corresponds to a single exercise.
+
+Input:
+  data/raw_data/subject_XXX/exercise_XXX/video_XXX_L.mp4
+  data/raw_data/subject_XXX/exercise_XXX/video_XXX_R.mp4
+
+Output:
+  data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose.csv
 """
 # __________ Imports __________
 import csv
@@ -58,21 +77,21 @@ class _OneEuroFilter:
         return 1.0 / (1.0 + tau / dt)
 
     def __call__(self, x, t):
-        if self._t_prev is None:            # primo campione: inizializza e restituisci invariato
+        if self._t_prev is None:            
             self._x_prev = x
             self._t_prev = t
             return x
         dt = t - self._t_prev
         if dt <= 0:
             return self._x_prev
-        # Stima derivata e filtraggio adattivo
+        # Stimated derivative e adaptive filter
         dx      = (x - self._x_prev) / dt
         a_d     = self._alpha(self.d_cutoff, dt)
         dx_hat  = a_d * dx + (1.0 - a_d) * self._dx_prev
         cutoff  = self.min_cutoff + self.beta * abs(dx_hat)
         a       = self._alpha(cutoff, dt)
         x_hat   = a * x + (1.0 - a) * self._x_prev
-        # Aggiorno stato
+        # Update state
         self._x_prev  = x_hat
         self._dx_prev = dx_hat
         self._t_prev  = t
@@ -133,7 +152,7 @@ def _disparity_to_depth_map(disp_L, P_L):
 def _stereo_confidence(disp_L, disp_R, u, v, threshold=1.0):
     """
     Left-Right Consistency check.
-    Conf = 1 se i due matcher concordano, 0 se discordano.
+    Conf = 1 if the two matcher are the same, 0 otherwise.
     """
     ui, vi = int(round(u)), int(round(v))
     h, w = disp_L.shape
@@ -199,7 +218,8 @@ def _draw_landmarks(image, results):
 # -------------------------------------------------------
 def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame_h, last_z_pose, last_z_age, stereo_oef, disp_L, disp_R):
     """
-    TODO: docstring 
+    Returns the row with the joint positions of one frame. Each joint position has x, y, z and visibility value.
+    The z value is computed thanks to the stereo camera when the confidence is high enough.
     """
     # __________ Setup __________
     base = [i_frame, timestamp]
@@ -222,7 +242,7 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
         confidence = _stereo_confidence(disp_L, disp_R, u, v)
 
         # _____ Using (or not) z_stereo _____
-        if confidence >= Z_CONF_THRESHOLD:      # Se la rilevazione è abbastanza affidabile usa la z stereo
+        if confidence >= Z_CONF_THRESHOLD:      # Use stereo if there is enough confidence
             z_raw = depth_map[int(round(v)), int(round(u))]
             if np.isnan(z_raw) or z_raw < 0.1 or z_raw > 4.0:
                 z_raw = None
@@ -232,9 +252,9 @@ def _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame
         if z is None:
             continue
         if sh_z_stereo is None:
-            sh_z_stereo = z                            # Se una delle due non è stata rilevata usiamo solo l'altra
+            sh_z_stereo = z                            # If one of the two shoulders was not captured only one is used
         else:
-            sh_z_stereo = (sh_z_stereo + z) / 2.0     # Se entrambe sono state rilevate usiamo la media
+            sh_z_stereo = (sh_z_stereo + z) / 2.0     # If both showlders are captured the avg value is used
 
 
     # __________ Get all landmarks of the frame __________
@@ -302,8 +322,8 @@ def main():
     print("Building rectification map...")
     map_L1, map_L2, map_R1, map_R2, P_L, P_R, Q = _build_rectification_map(img_size)
     sgbm = _build_sgbm()
-    right_matcher = cv2.ximgproc.createRightMatcher(sgbm)   # creato una volta sola
-    wls = cv2.ximgproc.createDisparityWLSFilter(sgbm)       # creato una volta sola
+    right_matcher = cv2.ximgproc.createRightMatcher(sgbm)   
+    wls = cv2.ximgproc.createDisparityWLSFilter(sgbm)       
     wls.setLambda(2000)
     wls.setSigmaColor(1.5)
     print("Ready. Press 'P' to pause/resume, 'Q' to quit\n")
@@ -325,7 +345,7 @@ def main():
         min_tracking_confidence = 0.6
     ) as pose:
 
-        _clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) # serve ad aumentare il contrasto in modo locale
+        _clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))     # used to increase local contrast
         display_bgr = None
 
         # __________ Main loop __________
@@ -337,22 +357,22 @@ def main():
                     print("Video ended")
                     break
                 
-                # Trasformo l'immagine grezza in un'immagine rettificata (valutare INTER_CUBIC, più preciso ma lento, fonte ChatGPT)
+                # From raw image to rectified image
                 rect_L = cv2.remap(raw_L, map_L1, map_L2, cv2.INTER_CUBIC)
                 rect_R = cv2.remap(raw_R, map_R1, map_R2, cv2.INTER_CUBIC)
         
-                # Trasformo in scala di grigio e applico clahe
+                # Transform in gray scale and apply clahe
                 gray_L = _clahe.apply(cv2.cvtColor(rect_L, cv2.COLOR_BGR2GRAY))
                 gray_R = _clahe.apply(cv2.cvtColor(rect_R, cv2.COLOR_BGR2GRAY))
 
-                # Creo la disparity map (raw, usata per LRC confidence)
+                # Creates disparity map (raw, used for LRC confidence)
                 disp_L_raw = sgbm.compute(gray_L, gray_R)
 
-                # Filtraggio WLS (disp_L filtrata, usata per la depth map)
+                # WLS filtering 
                 disp_R = right_matcher.compute(gray_R, gray_L)
                 disp_L = wls.filter(disp_L_raw, gray_L, disparity_map_right=disp_R)
 
-                # Creo depth map dalla disparity filtrata (più smooth)
+                # Creates depth map from disparity filtered map (smoother)
                 depth_map = _disparity_to_depth_map(disp_L, P_L)
 
                 # Show disparity and depth maps
@@ -364,24 +384,24 @@ def main():
                 d_vis = ((d_vis - Z_MIN) / (Z_MAX - Z_MIN) * 255).astype(np.uint8)
                 # cv2.imshow("Depth", d_vis)
 
-                # Prendo i landmark da MediaPipe e li salvo in 'results'
+                # Get landmarks from MediaPipe
                 rgb_L = cv2.cvtColor(rect_L, cv2.COLOR_BGR2RGB)
                 rgb_L.flags.writeable = False
                 results = pose.process(rgb_L)
                 rgb_L.flags.writeable = True
 
-                # Estraggo le coordinate dei giunti e scrivo la riga nel file output (pose.csv)
+                # Extract joints coordinates and writes line in file output (pose.csv)
                 timestamp = i_frame / fps
                 pose_row = _extract_pos_row(results, i_frame, timestamp, depth_map, P_L, frame_w, frame_h, last_z_pose, last_z_age, stereo_oef, disp_L_raw, disp_R)
                 with open(csv_path['pose'], 'a', newline='') as f:
                     csv.writer(f).writerow(pose_row)
 
-                # Disegno i landmarks sul frame
+                # Draws landmarks on frame
                 display_bgr = cv2.cvtColor(rgb_L, cv2.COLOR_RGB2BGR)
                 display_bgr = _draw_landmarks(display_bgr, results)
                 i_frame += 1
 
-            # Mostra la finestra con il video processato e i landmark disegnati
+            # Shows the video with landmarks drawn
             if display_bgr is None:
                 continue
             paused_label = "  [PAUSED]  " if paused else ""
@@ -391,7 +411,7 @@ def main():
             shown = cv2.resize(display_bgr, (DISPLAY_WIDTH, dh))
             # cv2.imshow("Reachy - Stereo Landmark Extraction", shown)
 
-            # Gestisci comandi da tastiera (pause and quit)
+            # Handle keyboard inputs (pause and quit)
             key = cv2.waitKey(1 if not paused else 0) & 0xFF
             if key == ord('p'):
                 paused = not paused

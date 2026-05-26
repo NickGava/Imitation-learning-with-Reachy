@@ -8,19 +8,27 @@ Steps (in order):
   2. data_cleaning.py
   3. mapping.py
   4. run_ik.py
+  5. utilities.plot_pose.py
+  6. utilities.plot_joints.py
 
 Stereo auto-detection:
-  video_XXX.mp4        -> pose_estimation.py
+  video_XXX.mp4       -> pose_estimation.py
   video_XXX_L/R.mp4   -> pose_estimation_stereo.py
 
-Usage (single video):
-  python run_data_acquisition.py
-  python run_data_acquisition.py --subject 1 --exercise 2 --video 3
-  python run_data_acquisition.py --subject 1 --exercise 2 --video 3 --start 2 --stop 5
+Args:
+  --subject    ->   type=int, default=None, insert the number of the subject
+  --exercise   ->   type=int, default=None, insert the number of the exercise
+  --video      ->   type=int, default=None, insert the number of the video
 
-Usage (batch):
+  --ex-start   ->   type=int, default=None, insert the first exercise of a range (inclusive); must be used together with --ex-end
+  --ex-end     ->   type=int, default=None, insert last exercise of a range (inclusive); must be used together with --ex-start
+
+  --start      ->   type=int, default=1, start from step N (1-6)
+  --stop       ->   type=int, default=6, stop after step N (1-6)
+
+Usage:
   When prompted, type 'a' instead of a number to process all:
-    Subject  'a' -> all subjects  (exercise still asked)
+    Subject  'a' -> all subjects (exercise still asked)
     Exercise 'a' -> all exercises under the subject(s), all videos
     Video    'a' -> all videos under the subject/exercise
 '''
@@ -35,10 +43,10 @@ from pathlib import Path
 
 from utilities.config import DATA_ROOT
 
-# adds data_acquisition directory to Python path
+# Adds data_acquisition directory to Python path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "data_acquisition"))
 
-# Pipeline steps — step 1 module is filled in dynamically per video
+# Pipeline steps
 STEPS = [
     (1, "Pose Estimation",  None),          # module_name resolved at runtime
     (2, "Data Cleaning",    "data_cleaning"),
@@ -134,10 +142,10 @@ def _ask(prompt: str) -> str:
 
 def _parse_inputs(args) -> tuple:
     """
-    Returns (subject_name_or_'a', exercise_name_or_'a', video_name_or_'a').
+    Returns (subject_name or 'a', exercise_name or 'a', video_name or 'a').
     Accepts CLI args or interactive prompts. 'a' propagates downward.
     """
-    # --- Subject ---
+    # _____ Subject _____
     if args.subject is not None:
         subject_raw = str(args.subject)
     else:
@@ -146,7 +154,7 @@ def _parse_inputs(args) -> tuple:
     subject_all = (subject_raw == 'a')
     subject_out = 'a' if subject_all else f"subject_{int(subject_raw):03d}"
 
-    # --- Exercise ---
+    # _____ Exercise _____
     if args.ex_start is not None:
         # Range mode: build list of exercise names, video forced to 'a'
         exercise_out = [f"exercise_{i:03d}"
@@ -161,7 +169,7 @@ def _parse_inputs(args) -> tuple:
         exercise_all = (exercise_raw == 'a')
         exercise_out = 'a' if exercise_all else f"exercise_{int(exercise_raw):03d}"
 
-    # --- Video (not asked if exercise='a' or range) ---
+    # _____ Video (not asked if exercise='a' or range) _____
     if exercise_all or isinstance(exercise_out, list):
         video_out = 'a'
     elif args.video is not None:
@@ -191,8 +199,7 @@ def _make_input_stub(subject_name: str, exercise_name: str, video_name: str):
     return _fake_input
 
 
-def _run_step(step_name: str, module_name: str,
-              subject: str, exercise: str, video: str) -> bool:
+def _run_step(step_name: str, module_name: str, subject: str, exercise: str, video: str) -> bool:
     print(f"\n{'='*60}")
     print(f"  STEP: {step_name}  [{module_name}.py]")
     print(f"{'='*60}")
@@ -222,16 +229,13 @@ def _run_step(step_name: str, module_name: str,
         builtins.input = original_input
 
 
-def _run_pipeline(subject: str, exercise: str, video: str,
-                  use_stereo: bool, start: int, stop: int) -> dict:
+def _run_pipeline(subject: str, exercise: str, video: str, use_stereo: bool, start: int, stop: int) -> dict:
     """Runs the full pipeline for a single video. Returns {step_num: ok}."""
 
     step1_module = "pose_estimation_stereo" if use_stereo else "pose_estimation"
     step1_label  = "Pose Estimation (stereo)" if use_stereo else "Pose Estimation (mono)"
 
-    steps = [(num, name if num != 1 else step1_label,
-              module if num != 1 else step1_module)
-             for num, name, module in STEPS]
+    steps = [(num, name if num != 1 else step1_label, module if num != 1 else step1_module) for num, name, module in STEPS]
 
     results = {}
     for step_num, step_name, module_name in steps:
@@ -253,24 +257,17 @@ def _run_pipeline(subject: str, exercise: str, video: str,
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description="Full landmark-to-IK pipeline. Use 'a' for batch mode.")
+    parser = argparse.ArgumentParser(description="Full landmark-to-IK pipeline. Use 'a' for batch mode.")
     parser.add_argument("--subject",   type=int, default=None)
     parser.add_argument("--exercise",  type=int, default=None)
     parser.add_argument("--video",     type=int, default=None)
-    parser.add_argument("--ex-start",  type=int, default=None, metavar="N",
-                        help="First exercise of a range (inclusive). "
-                             "Must be used together with --ex-end.")
-    parser.add_argument("--ex-end",    type=int, default=None, metavar="N",
-                        help="Last exercise of a range (inclusive). "
-                             "Must be used together with --ex-start.")
-    parser.add_argument("--start", type=int, default=1, metavar="N",
-                        help="Start from step N (1-5). Default: 1")
-    parser.add_argument("--stop",  type=int, default=6, metavar="N",
-                        help="Stop after step N (1-5). Default: 5")
+    parser.add_argument("--ex-start",  type=int, default=None, help="First exercise of a range (inclusive). Must be used together with --ex-end.")
+    parser.add_argument("--ex-end",    type=int, default=None, help="Last exercise of a range (inclusive). Must be used together with --ex-start.")
+    parser.add_argument("--start", type=int, default=1, help="Start from step N (1-5). Default: 1")
+    parser.add_argument("--stop",  type=int, default=6, help="Stop after step N (1-5). Default: 5")
     args = parser.parse_args()
 
-    # Validate --ex-start / --ex-end
+    # __________ Validate --ex-start / --ex-end __________
     if (args.ex_start is None) != (args.ex_end is None):
         parser.error("--ex-start and --ex-end must be used together.")
     if args.ex_start is not None and args.ex_start > args.ex_end:
@@ -278,12 +275,14 @@ def main():
     if args.ex_start is not None and args.exercise is not None:
         parser.error("--exercise and --ex-start/--ex-end are mutually exclusive.")
 
+    # __________ Parse inputs __________
     try:
         subject_out, exercise_out, video_out = _parse_inputs(args)
     except (ValueError, StopIteration):
         print("Error: invalid input.")
         sys.exit(1)
 
+    # __________ Collect targets __________
     targets = _collect_targets(subject_out, exercise_out, video_out)
 
     if not targets:
@@ -296,9 +295,10 @@ def main():
         print(f"  {s} / {e} / {v}  [{mode}]")
     print(f"Steps: {args.start} -> {args.stop}\n")
 
-    t_total   = time.time()
+    t_total = time.time()
     all_results = {}
 
+    # __________ Run pipeline __________
     for s, e, v, stereo in targets:
         label = f"{s} / {e} / {v}"
         print(f"\n{'#'*60}")
@@ -308,7 +308,7 @@ def main():
         res = _run_pipeline(s, e, v, stereo, args.start, args.stop)
         all_results[label] = res
 
-    # --- Global summary ---
+    # __________ Global summary __________
     print(f"\n{'='*60}")
     print(f"  GLOBAL SUMMARY  (total: {time.time() - t_total:.1f}s)")
     print(f"{'='*60}")

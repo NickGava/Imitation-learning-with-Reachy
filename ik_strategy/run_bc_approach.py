@@ -1,20 +1,23 @@
 '''
 run_bc_approach.py
 =============================================================================
-Orchestrates the full BC pipeline for one or more exercises and one split:
-  1. build_dataset.py  — builds n_XX/bc_dataset.csv
-  2. MLP  — train (n_XX/MLP/) → test (n_XX/plots/, n_XX/plots_joints/)
-  3. GRU
-  4. Transformer
+Runs the full BC pipeline for one or more exercises and one split:
+  1. build_dataset.py  - builds n_XX/bc_dataset.csv
+  2. MLP  - train (n_XX/MLP/) -> test (n_XX/plots/, n_XX/plots_joints/)
+  3. GRU  - train (n_XX/GRU/) -> test (n_XX/plots/, n_XX/plots_joints/)
+  4. Transformer  - train (n_XX/Transformer/) -> test (n_XX/plots/, n_XX/plots_joints/)
 
-Usage:
-  py run_bc_approach.py                              # prompted
-  py run_bc_approach.py --exercise 1                 # single exercise, all demos
-  py run_bc_approach.py --exercise 1 --n-demos 10    # split n_10
-  py run_bc_approach.py --exercise 1 --n-demos 10 --runs 3
-  py run_bc_approach.py --exercise 1 --training-runs 5    # 5 independent training runs
-  py run_bc_approach.py --exercise a --n-demos 25    # all exercises, split n_25
-  py run_bc_approach.py --mlp-only
+Args:
+  --exercise   ->  type=str, default=None, exercise number or "a" for all exercises; if omitted, you will be prompted
+  --start      ->  type=int, default=1, first exercise when running a range
+  --end        ->  type=int, default=26, last exercise when running a range
+  --runs       ->  type=int, default=1, number of autoregressive inference runs for test plots
+  --training-runs   ->  type=int, default=1, number of independent training runs with different seeds; if > 1, trains N times and aggregates via aggregate_runs
+  --steps      ->  type=int, default=None, override number of inference steps
+  --n-demos    ->  type=int, default=55, choices=[10, 25, 55], number of demos split to use
+  --mlp-only', ->  action='store_true', runs only mlp
+  --gru-only', ->  action='store_true', runs only gru
+  --transformer-only', -> action='store_true', runs only transformer
 '''
 
 import argparse
@@ -33,9 +36,7 @@ def _run(module: str, args: list) -> bool:
     return result.returncode == 0
 
 
-def _run_exercise(ex: int, runs: int, steps,
-                  run_mlp: bool, run_gru: bool, run_transformer: bool,
-                  n_demos: int = 55, training_runs: int = 1) -> bool:
+def _run_exercise(ex: int, runs: int, steps, run_mlp: bool, run_gru: bool, run_transformer: bool, n_demos: int = 55, training_runs: int = 1) -> bool:
     """
     Runs build_dataset + selected model pipelines for a single exercise and split.
     If training_runs > 1, each architecture is trained and tested N times with
@@ -49,10 +50,10 @@ def _run_exercise(ex: int, runs: int, steps,
         test_args_base += ['--steps', steps]
 
     print(f'\n{"#"*60}')
-    print(f'# build_dataset — exercise {ex:03d}  split n_{n_demos:02d}')
+    print(f'# build_dataset - exercise {ex:03d}  split n_{n_demos:02d}')
     print(f'{"#"*60}')
     if not _run('bc_approach.build_dataset', [ex, '--n-demos', n_demos]):
-        print(f'  [ERROR] build_dataset failed for exercise {ex:03d} — skipping.')
+        print(f'  [ERROR] build_dataset failed for exercise {ex:03d} - skipping.')
         return False
 
     for tr in range(1, training_runs + 1):
@@ -61,30 +62,30 @@ def _run_exercise(ex: int, runs: int, steps,
         test_args = test_args_base + run_args
 
         if run_mlp:
-            print(f'\n{"#"*60}\n# MLP — TRAIN  [{run_lbl}]\n{"#"*60}')
+            print(f'\n{"#"*60}\n# MLP - TRAIN  [{run_lbl}]\n{"#"*60}')
             if not _run('bc_approach.MLP.train_bc', [ex, '--n-demos', n_demos] + run_args):
                 return False
-            print(f'\n{"#"*60}\n# MLP — TEST  [{run_lbl}]\n{"#"*60}')
+            print(f'\n{"#"*60}\n# MLP - TEST  [{run_lbl}]\n{"#"*60}')
             if not _run('bc_approach.MLP.test_bc', test_args):
                 return False
 
         if run_gru:
-            print(f'\n{"#"*60}\n# GRU — TRAIN  [{run_lbl}]\n{"#"*60}')
+            print(f'\n{"#"*60}\n# GRU - TRAIN  [{run_lbl}]\n{"#"*60}')
             if not _run('bc_approach.GRU.train_bc', [ex, '--n-demos', n_demos] + run_args):
                 return False
-            print(f'\n{"#"*60}\n# GRU — TEST  [{run_lbl}]\n{"#"*60}')
+            print(f'\n{"#"*60}\n# GRU - TEST  [{run_lbl}]\n{"#"*60}')
             if not _run('bc_approach.GRU.test_bc', test_args):
                 return False
 
         if run_transformer:
-            print(f'\n{"#"*60}\n# TRANSFORMER — TRAIN  [{run_lbl}]\n{"#"*60}')
+            print(f'\n{"#"*60}\n# TRANSFORMER - TRAIN  [{run_lbl}]\n{"#"*60}')
             if not _run('bc_approach.Transformer.train_bc', [ex, '--n-demos', n_demos] + run_args):
                 return False
-            print(f'\n{"#"*60}\n# TRANSFORMER — TEST  [{run_lbl}]\n{"#"*60}')
+            print(f'\n{"#"*60}\n# TRANSFORMER - TEST  [{run_lbl}]\n{"#"*60}')
             if not _run('bc_approach.Transformer.test_bc', test_args):
                 return False
 
-    # ── Aggregate training runs ───────────────────────────────────────────────
+    # __________ Aggregate training runs __________ 
     if training_runs > 1:
         print(f'\n{"#"*60}\n# AGGREGATE RUNS  (exercise {ex:03d})\n{"#"*60}')
         if not _run('bc_approach.aggregate_runs', ['--exercise', ex, '--n-demos', n_demos]):
@@ -94,29 +95,21 @@ def _run_exercise(ex: int, runs: int, steps,
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Run BC pipeline for one or all exercises.')
-    parser.add_argument('--exercise', type=str, default=None,
-                        help='Exercise number, or "a" for all 1-20. If omitted, you will be prompted.')
-    parser.add_argument('--start',   type=int, default=1,
-                        help='First exercise when running a range (default: 1).')
-    parser.add_argument('--end',     type=int, default=26,
-                        help='Last exercise when running a range (default: 26).')
-    parser.add_argument('--runs',    type=int, default=1,
-                        help='Number of autoregressive inference runs for test plots (default: 1).')
-    parser.add_argument('--training-runs', type=int, default=1,
-                        help='Number of independent training runs with different seeds (default: 1). '
+    parser = argparse.ArgumentParser(description='Run BC pipeline for one or all exercises.')
+    parser.add_argument('--exercise', type=str, default=None, help='Exercise number, or "a" for all exercise. If omitted, you will be prompted.')
+    parser.add_argument('--start',   type=int, default=1, help='First exercise when running a range (default: 1).')
+    parser.add_argument('--end',     type=int, default=26, help='Last exercise when running a range (default: 26).')
+    parser.add_argument('--runs',    type=int, default=1, help='Number of autoregressive inference runs for test plots (default: 1).')
+    parser.add_argument('--training-runs', type=int, default=1, help='Number of independent training runs with different seeds (default: 1). '
                              'If > 1, trains N times and aggregates via aggregate_runs.')
-    parser.add_argument('--steps',   type=int, default=None,
-                        help='Override number of inference steps.')
-    parser.add_argument('--n-demos', type=int, default=55, choices=[10, 25, 55],
-                        help='Number of demos split to use (default: 55 = all subjects).')
+    parser.add_argument('--steps',   type=int, default=None, help='Override number of inference steps.')
+    parser.add_argument('--n-demos', type=int, default=55, choices=[10, 25, 55], help='Number of demos split to use (default: 55 = all subjects).')
     parser.add_argument('--mlp-only',         action='store_true')
     parser.add_argument('--gru-only',         action='store_true')
     parser.add_argument('--transformer-only', action='store_true')
     args = parser.parse_args()
 
-    # Resolve exercise list
+    # __________ Resolve exercise list __________ 
     exercise_arg = args.exercise
     if exercise_arg is None:
         exercise_arg = input("Exercise number (or 'a' for all): ").strip()
@@ -134,7 +127,7 @@ def main():
     run_gru         = not args.mlp_only and not args.transformer_only
     run_transformer = not args.mlp_only and not args.gru_only
 
-    # Run
+    # __________ Run pipeline __________ 
     t_total = time.time()
     ok, fail = [], []
 
@@ -150,7 +143,7 @@ def main():
         else:
             fail.append(ex)
 
-    # Summary
+    # __________ Summary __________ 
     elapsed = time.time() - t_total
     print(f'\n{"="*60}')
     print(f'SUMMARY  (total: {elapsed:.0f}s)  split n_{args.n_demos:02d}')

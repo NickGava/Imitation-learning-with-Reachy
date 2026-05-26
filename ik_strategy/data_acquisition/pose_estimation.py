@@ -10,7 +10,7 @@ Controls:
   P : pause / resume
   Q : quit
 
-Every frame is processed and saved, each video corresponds to a single exercise.
+Every frame is processed and saved in a line, each video corresponds to a single exercise.
 
 Input:
   data/raw_data/subject_XXX/exercise_XXX/video_XXX.mp4
@@ -34,7 +34,7 @@ mp_drawing_styles = mp.solutions.drawing_styles
 # Display window width in pixels
 DISPLAY_WIDTH = 500
 
-# Hide face landmarks (indices 0-10) from the overlay — not used in pipeline
+# Hide face landmarks (indices 0-10) from the overlay - not used in pipeline
 _POSE_FACE_INDICES  = set(range(11))
 _HIDDEN_SPEC        = mp_drawing.DrawingSpec(color=(0, 0, 0), thickness=0, circle_radius=0)
 _DEFAULT_POSE_STYLE = mp_drawing_styles.get_default_pose_landmarks_style()
@@ -76,7 +76,7 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS)
     print(f"Video loaded: {video_path.relative_to(DATA_ROOT.parent)}  ({total_frames} frames @ {fps:.1f} fps)")
 
-    # Initialize CSV files for this video
+    # __________ Initialize CSV files for this video __________ 
     landmarks_folder = DATA_ROOT / "landmarks" / subject_name / exercise_name / video_name
     csv_paths = init_csv_files(landmarks_folder)
 
@@ -100,8 +100,7 @@ def main():
                     print("Video ended.")
                     break
 
-                # MediaPipe works in RGB
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # MediaPipe works in RGB
                 frame_rgb.flags.writeable = False       # avoids internal memory copy
 
                 results = pose.process(frame_rgb)   # returns pose landmarks
@@ -114,12 +113,12 @@ def main():
 
                 frame_bgr = draw_landmarks(frame_bgr, results)
 
-            # HUD
+            # _____ HUD _____
             pause_label = "[PAUSED]" if paused else ""
             cv2.putText(frame_bgr, f"Frame: {frame_idx} / {total_frames}" + pause_label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (17, 106, 1), 2)
             cv2.putText(frame_bgr, f"{subject_name} / {exercise_name} / {video_name}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (17, 106, 1), 2)
 
-            # Show processing video
+            # _____ Show processing video _____ 
             h, w = frame_bgr.shape[:2]
             display = cv2.resize(frame_bgr, (DISPLAY_WIDTH, int(h * DISPLAY_WIDTH / w)))
             # cv2.imshow("Reachy - Landmark Extraction", display)
