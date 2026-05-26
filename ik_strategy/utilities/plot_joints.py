@@ -17,10 +17,10 @@ Output:
 
 Usage:
   py visualize_joints.py
-  → prompts for subject / exercise / video
+  -> prompts for subject / exercise / video
 '''
 
-#  Imports 
+# __________ Imports __________ 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -29,7 +29,7 @@ import matplotlib.ticker as ticker
 from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG
 from utilities.ask_inputs import ask_inputs
 
-#  Constants 
+# __________ Constants __________  
 # Joints to plot: (column_name, index_in_JOINT_LIMITS_DEG, side)
 RIGHT_JOINTS = [
     ('r_shoulder_pitch', 0, 'right'),
@@ -57,8 +57,8 @@ JOINT_LABELS = {
 }
 
 # Plot style
-LINE_COLOR_R = '#1f77b4'    # blue  – right arm
-LINE_COLOR_L = '#d62728'    # red   – left arm
+LINE_COLOR_R = '#1f77b4'    # blue  - right arm
+LINE_COLOR_L = '#d62728'    # red   - left arm
 LINE_WIDTH   = 1.5
 Y_PADDING = 5.0
 
@@ -67,10 +67,10 @@ Y_PADDING = 5.0
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    #  Ask inputs 
+    # __________ Ask inputs __________ 
     subject_name, exercise_name, video_name = ask_inputs()
 
-    #  Build paths 
+    # __________ Build paths __________ 
     video_dir  = DATA_ROOT / 'landmarks' / subject_name / exercise_name / video_name
     ik_path    = video_dir / 'joint_ik.csv'
     plot_dir   = video_dir / 'plots'
@@ -79,7 +79,7 @@ def main():
         print(f'ERROR: joint_ik.csv not found -> {ik_path}')
         return
 
-    #  Load data 
+    # __________ Load data __________ 
     df     = pd.read_csv(ik_path)
     frames = df['frame'].values
 
@@ -93,7 +93,7 @@ def main():
 
     n_rows = max(len(r_joints), len(l_joints))
 
-    #  Figure 
+    # Figure 
     fig, axes = plt.subplots(
         nrows   = n_rows,
         ncols   = 2,
@@ -104,7 +104,7 @@ def main():
         axes = np.array([axes])
 
     fig.suptitle(
-        f'Joint angles – {subject_name} / {exercise_name} / {video_name}\n'
+        f'Joint angles - {subject_name} / {exercise_name} / {video_name}\n'
         f'(Y scale = robot joint limits)',
         fontsize=13, fontweight='bold', y=1.01,
     )
@@ -112,10 +112,10 @@ def main():
     axes[0, 0].set_title('Right arm', fontsize=12, fontweight='bold', pad=8)
     axes[0, 1].set_title('Left arm',  fontsize=12, fontweight='bold', pad=8)
 
-    #  Plot each joint 
+    # __________ Plot each joint __________ 
     for row_idx in range(n_rows):
 
-        # ----- Left column: right arm -----
+        # __________  Left column: right arm __________ 
         ax_r = axes[row_idx, 0]
         if row_idx < len(r_joints):
             col, lim_idx, side = r_joints[row_idx]
@@ -126,7 +126,7 @@ def main():
         else:
             ax_r.set_visible(False)
 
-        # ----- Right column: left arm -----
+        # __________  Right column: left arm __________ 
         ax_l = axes[row_idx, 1]
         if row_idx < len(l_joints):
             col, lim_idx, side = l_joints[row_idx]
@@ -136,7 +136,7 @@ def main():
         else:
             ax_l.set_visible(False)
 
-        # ----- Grid and ticks -----
+        # __________  Grid and ticks __________ 
         for ax in (ax_r, ax_l):
             if ax.get_visible():
                 ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
@@ -154,7 +154,7 @@ def main():
                 if row_idx == n_rows - 1:
                     ax.set_xlabel('Frame', fontsize=9)
 
-    #  Save 
+    # __________ Save __________ 
     plot_dir.mkdir(parents=True, exist_ok=True)
     output_path = plot_dir / 'joints.png'
     fig.tight_layout()

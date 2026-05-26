@@ -33,6 +33,23 @@ ROBOT_IP     = "10.59.1.20"
 FOURCC       = cv2.VideoWriter_fourcc(*'mp4v')
 DISPLAY_WIDTH = 500              # preview window width
 
+
+def _report(frame_times, path_L, path_R):
+    n = len(frame_times)
+    if n > 1:
+        duration = frame_times[-1] - frame_times[0]
+        fps_real  = (n - 1) / duration if duration > 0 else 0.0
+        print(f"\nRecording saved:")
+        print(f"  {path_L}")
+        print(f"  {path_R}")
+        print(f"  Frames   : {n}")
+        print(f"  Duration : {duration:.2f} s")
+        print(f"  Avg FPS  : {fps_real:.1f}")
+        if fps_real < 25:
+            print("  ⚠  FPS lower than expected - check USB bandwidth or CPU load.")
+    else:
+        print("No frames recorded.")
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -40,7 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description='Record synchronized stereo video from Reachy.')
     parser.add_argument('--subject',  type=int, default=None, help='Subject number (e.g. 1)')
     parser.add_argument('--exercise', type=int, default=None, help='Exercise number (e.g. 2)')
-    parser.add_argument('--video', type=int, default=None, help='video number (e.g. 2)')
+    parser.add_argument('--video', type=int, default=None, help='Video number (e.g. 2)')
     parser.add_argument('--autostart', action='store_true', help='Start recording immediately without pressing SPACE')
     args = parser.parse_args()
 
@@ -48,7 +65,7 @@ def main():
         subject_name  = f'subject_{args.subject:03d}'
         exercise_name = f'exercise_{args.exercise:03d}'
         video_name    = f'video_{args.video:03d}'
-        autostart     = True   # se tutti gli argomenti sono passati, parte subito
+        autostart     = True
     else:
         subject_name, exercise_name, video_name = ask_inputs()
         autostart = args.autostart
@@ -93,7 +110,7 @@ def main():
     recording = False
     frame_times = []
 
-    middle_clicked = [False]  # lista per mutabilità nel closure
+    middle_clicked = [False]  # list for mutable boolean flag in mouse callback
 
     def on_mouse(event, x, y, flags, param):
         if event == cv2.EVENT_MBUTTONDOWN:
@@ -102,7 +119,7 @@ def main():
     cv2.namedWindow("Reachy - Stereo Recording (left camera)")
     cv2.setMouseCallback("Reachy - Stereo Recording (left camera)", on_mouse)
 
-    # Auto-start: avvia la registrazione prima di entrare nel loop
+    # Auto-start: start the recording before entering the loop
     if autostart:
         fps_guess = 30.0
         writer_L  = cv2.VideoWriter(str(path_L), FOURCC, fps_guess, (w, h))
@@ -173,21 +190,6 @@ def main():
     finally:
         cv2.destroyAllWindows()
 
-def _report(frame_times, path_L, path_R):
-    n = len(frame_times)
-    if n > 1:
-        duration = frame_times[-1] - frame_times[0]
-        fps_real  = (n - 1) / duration if duration > 0 else 0.0
-        print(f"\nRecording saved:")
-        print(f"  {path_L}")
-        print(f"  {path_R}")
-        print(f"  Frames   : {n}")
-        print(f"  Duration : {duration:.2f} s")
-        print(f"  Avg FPS  : {fps_real:.1f}")
-        if fps_real < 25:
-            print("  ⚠  FPS lower than expected - check USB bandwidth or CPU load.")
-    else:
-        print("No frames recorded.")
 
 if __name__ == "__main__":
     main()

@@ -1,22 +1,22 @@
 """
 split_utils.py
 =============================================================================
-Helper functions per l'ablation study sul numero di dimostrazioni.
+Helper functions for ablation study on numbre of demonstrations.
 
-11 soggetti x 5 demo = 55 demo totali per esercizio.
-I soggetti sono selezionati in ordine alfabetico/numerico (deterministico).
+11 subjects x 5 demo = 55 total demo per exercise.
+Subjects are selected in numerical order (deterministic).
 
 Splits:
-  n_10  ->  2 soggetti  (10 demo)
-  n_25  ->  5 soggetti  (25 demo)
-  n_55  -> 11 soggetti  (55 demo)  <- comportamento di default
+  n_10  ->  2 subjects  (10 demo)
+  n_25  ->  5 subjects  (25 demo)
+  n_55  -> 11 subjects  (55 demo)  <- default behaviour
 """
 
 from pathlib import Path
 from typing import List
 
 # ---------------------------------------------------------------------------
-# Costanti
+# Constants
 # ---------------------------------------------------------------------------
 N_DEMOS_SPLITS: List[int] = [10, 25, 55]
 
@@ -28,12 +28,12 @@ SUBJECTS_PER_SPLIT = {
 
 
 # ---------------------------------------------------------------------------
-# Funzioni helper
+# Helpers
 # ---------------------------------------------------------------------------
 
 def split_name(n_demos: int) -> str:
     """
-    Restituisce il nome della cartella per un dato numero di demo.
+    Returns the name of the folder for a given number of demo.
       split_name(10) -> 'n_10'
       split_name(25) -> 'n_25'
       split_name(55) -> 'n_55'
@@ -42,39 +42,39 @@ def split_name(n_demos: int) -> str:
 
 
 def n_subjects(n_demos: int) -> int:
-    """Numero di soggetti corrispondenti a n_demos."""
+    """Number of subjects corresponding to n_demos."""
     if n_demos not in SUBJECTS_PER_SPLIT:
         raise ValueError(
-            f'n_demos={n_demos} non supportato. '
-            f'Valori validi: {list(SUBJECTS_PER_SPLIT.keys())}')
+            f'n_demos={n_demos} not supported. '
+            f'Valid values: {list(SUBJECTS_PER_SPLIT.keys())}')
     return SUBJECTS_PER_SPLIT[n_demos]
 
 
 def select_subjects(all_subject_dirs: List[Path], n_demos: int) -> List[Path]:
     """
-    Restituisce i primi K subject_dir (ordinati alfabeticamente).
+    Returns the first K subject_dir (numerical order)
     K = SUBJECTS_PER_SPLIT[n_demos].
 
-    Parametri
+    Parameters
     ----------
-    all_subject_dirs : lista di Path a cartelle subject_XXX
-    n_demos          : 10, 25 o 55
+    all_subject_dirs : list if Path to subject_XXX folders
+    n_demos          : 10, 25 or 55
 
-    Ritorna
+    Returns
     -------
-    Lista di Path ridotta ai primi K soggetti.
+    List of Path reduced to the first K subjects.
     """
     k      = n_subjects(n_demos)
     sorted_dirs = sorted(all_subject_dirs, key=lambda p: p.name)
     selected    = sorted_dirs[:k]
     if len(selected) < k:
-        print(f'  [WARN] Richiesti {k} soggetti ma trovati solo {len(selected)}.')
+        print(f'  [WARN] Requested {k} subjects, but found only {len(selected)}.')
     return selected
 
 
 def get_split_dir(exercise_dir: Path, n_demos: int) -> Path:
     """
-    Ritorna la sottocartella dello split per un dato esercizio.
+    Returns the subfolder of the split for a given exercise.
       get_split_dir(Path('.../exercise_021'), 10) -> Path('.../exercise_021/n_10')
     """
     return exercise_dir / split_name(n_demos)

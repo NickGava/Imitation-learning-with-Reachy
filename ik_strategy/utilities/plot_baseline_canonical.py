@@ -2,9 +2,7 @@
 visualize_fk_dataset.py
 =============================================================================
 FK verification plots for the baseline and canonical trajectories of a given
-exercise. Mirrors _plot_fk_verification() from create_baselines.py, but saves
-the figures to disk instead of showing them interactively.
-
+exercise. 
 For each CSV found in data/dataset/exercise_XXX/ (baseline.csv, canonical.csv),
 the script computes forward kinematics on every frame and plots wrist and elbow
 trajectories in the Reachy torso frame (X=forward, Y=left, Z=up).
@@ -32,6 +30,34 @@ from utilities.config import DATA_ROOT, JOINT_COLS
 from data_acquisition.run_ik import fk
 
 Y_PADDING = 0.02    # metres of padding above/below the shared Y range
+
+
+
+# ---------------------------------------------------------------------------
+# Joint angles figure builder
+# ---------------------------------------------------------------------------
+RIGHT_JOINTS = [
+    ('r_shoulder_pitch', 0, 'right'),
+    ('r_shoulder_roll',  1, 'right'),
+    ('r_arm_yaw',        2, 'right'),
+    ('r_elbow_pitch',    3, 'right'),
+]
+LEFT_JOINTS = [
+    ('l_shoulder_pitch', 0, 'left'),
+    ('l_shoulder_roll',  1, 'left'),
+    ('l_arm_yaw',        2, 'left'),
+    ('l_elbow_pitch',    3, 'left'),
+]
+JOINT_LABELS = {
+    'r_shoulder_pitch': 'Shoulder Pitch', 'r_shoulder_roll': 'Shoulder Roll',
+    'r_arm_yaw':        'Arm Yaw',        'r_elbow_pitch':   'Elbow Pitch',
+    'l_shoulder_pitch': 'Shoulder Pitch', 'l_shoulder_roll': 'Shoulder Roll',
+    'l_arm_yaw':        'Arm Yaw',        'l_elbow_pitch':   'Elbow Pitch',
+}
+LINE_COLOR = '#2ca02c'
+J_PADDING  = 5.0
+
+from utilities.config import JOINT_LIMITS_DEG
 
 
 # ---------------------------------------------------------------------------
@@ -129,34 +155,6 @@ def _fk_figure(trajectory: np.ndarray, exercise_num: int, label: str) -> plt.Fig
     return fig
 
 
-
-# ---------------------------------------------------------------------------
-# Joint angles figure builder
-# ---------------------------------------------------------------------------
-RIGHT_JOINTS = [
-    ('r_shoulder_pitch', 0, 'right'),
-    ('r_shoulder_roll',  1, 'right'),
-    ('r_arm_yaw',        2, 'right'),
-    ('r_elbow_pitch',    3, 'right'),
-]
-LEFT_JOINTS = [
-    ('l_shoulder_pitch', 0, 'left'),
-    ('l_shoulder_roll',  1, 'left'),
-    ('l_arm_yaw',        2, 'left'),
-    ('l_elbow_pitch',    3, 'left'),
-]
-JOINT_LABELS = {
-    'r_shoulder_pitch': 'Shoulder Pitch', 'r_shoulder_roll': 'Shoulder Roll',
-    'r_arm_yaw':        'Arm Yaw',        'r_elbow_pitch':   'Elbow Pitch',
-    'l_shoulder_pitch': 'Shoulder Pitch', 'l_shoulder_roll': 'Shoulder Roll',
-    'l_arm_yaw':        'Arm Yaw',        'l_elbow_pitch':   'Elbow Pitch',
-}
-LINE_COLOR = '#2ca02c'
-J_PADDING  = 5.0
-
-from utilities.config import JOINT_LIMITS_DEG
-
-
 def _joints_figure(trajectory: np.ndarray, exercise_num: int, label: str) -> plt.Figure:
     '''
     Plots joint angles (same layout as plot_joints.py) for a given trajectory.
@@ -247,9 +245,7 @@ def _load_trajectory(csv_path: Path) -> np.ndarray:
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description='FK verification plots for baseline and canonical trajectories.'
-    )
+    parser = argparse.ArgumentParser(description='FK verification plots for baseline and canonical trajectories.')
     parser.add_argument('--exercise', type=int, required=True, help='Exercise number.')
     args = parser.parse_args()
 

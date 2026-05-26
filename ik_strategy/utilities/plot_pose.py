@@ -4,19 +4,13 @@ visualize_timeseries.py  (v2)
 2D time-series visualization of landmark data in WORLD FRAME: X=left, Y=down, Z=backward.
 
 Figures produced:
-  pose.png       - shoulder, elbow, wrist + nose per side  
-  right_hand.png - all 5 right hand landmarks              
-  left_hand.png  - all 5 left hand landmarks               
+  pose.png       - shoulder, elbow, wrist per side             
 
 Input:
   _data/landmarks/subject_XXX/exercise_XXX/video_XXX/pose_cleaned.csv
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/right_hand_cleaned.csv
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/left_hand_cleaned.csv
 
 Output (same folder):
   _data/landmarks/subject_XXX/exercise_XXX/video_XXX/plots/pose.png
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/plots/right_hand.png
-  _data/landmarks/subject_XXX/exercise_XXX/video_XXX/plots/left_hand.png
 '''
 
 import numpy as np
