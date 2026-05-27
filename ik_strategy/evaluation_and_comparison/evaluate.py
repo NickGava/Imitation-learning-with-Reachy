@@ -1,3 +1,17 @@
+"""
+Entry point for evaluating the LfD system on Reachy.
+
+Supports three evaluation modes:
+  - Per-exercise: DBA/BC metrics for one or more exercises and demo splits
+  - Modality analysis: stereo vs. monocular comparison at a fixed split
+  - Demos analysis: effect of the number of demonstrations on performance
+
+Usage:
+  py -m evaluation_and_comparison.evaluate --exercise 1
+  py -m evaluation_and_comparison.evaluate --all
+  py -m evaluation_and_comparison.evaluate --analysis modality
+  py -m evaluation_and_comparison.evaluate --analysis demos --exercise 21
+"""
 import argparse
 
 from utilities.config import DATA_ROOT
@@ -9,26 +23,11 @@ from evaluation_and_comparison.evaluate_demos    import run_demos_analysis
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Valutazione sistema LfD su Reachy.',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Esempi:
-  py -m evaluation_and_comparison.evaluate --exercise 1
-  py -m evaluation_and_comparison.evaluate --exercise 1 --n-demos 10 25 55
-  py -m evaluation_and_comparison.evaluate --analysis modality
-  py -m evaluation_and_comparison.evaluate --analysis demos --exercise 21
-  py -m evaluation_and_comparison.evaluate --all
-        """,
-    )
+    parser = argparse.ArgumentParser(description='Evaluation system LfD on Reachy.', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--exercise", type=int, nargs="+", default=None, metavar="N")
-    parser.add_argument("--n-demos", type=int, nargs="+",
-                        default=[55], choices=N_DEMOS_SPLITS,
-                        help="Split da valutare (default: 55). Piu valori: --n-demos 10 25 55")
-    parser.add_argument("--analysis", type=str, default=None,
-                        choices=["modality", "demos"])
-    parser.add_argument("--all", action="store_true",
-                        help="Valuta tutti gli esercizi trovati + analisi modality.")
+    parser.add_argument("--n-demos", type=int, nargs="+", default=[55], choices=N_DEMOS_SPLITS, help="Split to be evalueted (default: 55). Possible choices: --n-demos 10 25 55")
+    parser.add_argument("--analysis", type=str, default=None, choices=["modality", "demos"])
+    parser.add_argument("--all", action="store_true", help="Evaluate all exercises + analisis modality.")
     parser.add_argument("--steps", type=int, default=None)
     args = parser.parse_args()
 
@@ -53,7 +52,7 @@ Esempi:
 
     if args.analysis == "demos":
         if not exercise_nums:
-            parser.error("--analysis demos richiede anche --exercise N.")
+            parser.error("--analysis demos asks also --exercise N.")
         run_demos_analysis(exercise_nums)
 
     if not exercise_nums and not args.analysis and not args.all:

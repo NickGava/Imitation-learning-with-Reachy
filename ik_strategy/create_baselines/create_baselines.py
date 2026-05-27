@@ -11,7 +11,6 @@ Keyframe format:
       'r_shoulder_pitch': float,
       'r_shoulder_roll':  float,
       ... (any joint can be omitted - defaults to previous keyframe value)
-      'gripper_open': bool,     # True = open, False = closed (both sides)
     }
 
 Output:
@@ -19,9 +18,7 @@ Output:
 
 Usage:
   python create_baseline.py --exercise 1                # generate and save baseline for exercise 1
-  python create_baseline.py --exercise 1 --preview      # preview on Reachy simulator before saving
   python create_baseline.py --exercise 1 --fps 25       # custom frame rate (default: 30 fps)
-  python create_baseline.py --exercise 1 --plot-only    # plot (torso frame) FK verification without saving
 '''
 
 import argparse
@@ -29,6 +26,7 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from pathlib import Path
 from typing import List, Dict
 
@@ -39,6 +37,32 @@ from reachy_sdk.trajectory.interpolation import InterpolationMode
 from data_acquisition.run_ik import fk
 from utilities.config import DATA_ROOT, JOINT_LIMITS_DEG, DEFAULT_FPS, JOINT_COLS, HEAD_NEUTRAL, GRIPPER_RANGE, STARTING_POSE
 from create_baselines.exercises import EXERCISES
+
+
+# ---------------------------------------------------------------------------
+# Joint angles plot for canonical trajectory
+# ---------------------------------------------------------------------------
+RIGHT_JOINTS = [
+    ('r_shoulder_pitch', 0, 'right'),
+    ('r_shoulder_roll',  1, 'right'),
+    ('r_arm_yaw',        2, 'right'),
+    ('r_elbow_pitch',    3, 'right'),
+]
+LEFT_JOINTS = [
+    ('l_shoulder_pitch', 0, 'left'),
+    ('l_shoulder_roll',  1, 'left'),
+    ('l_arm_yaw',        2, 'left'),
+    ('l_elbow_pitch',    3, 'left'),
+]
+JOINT_LABELS = {
+    'r_shoulder_pitch': 'Shoulder Pitch', 'r_shoulder_roll': 'Shoulder Roll',
+    'r_arm_yaw':        'Arm Yaw',        'r_elbow_pitch':   'Elbow Pitch',
+    'l_shoulder_pitch': 'Shoulder Pitch', 'l_shoulder_roll': 'Shoulder Roll',
+    'l_arm_yaw':        'Arm Yaw',        'l_elbow_pitch':   'Elbow Pitch',
+}
+LINE_COLOR_CANONICAL = '#2ca02c'
+Y_PADDING = 5.0
+
 
 # ---------------------------------------------------------------------------
 # Minimum jerk interpolation
@@ -149,7 +173,7 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int, output_dir:
     '''
     Computes FK for every frame and plots wrist and elbow trajectories in 3D (torso frame) for both arms.
     All Y axes share the same scale. X-axis label is shown on every subplot.
-    Saves the figure to output_dir/plots/baseline.png automatically.
+    Saves the figure to output_dir/baseline.png automatically.
     '''
     r_wrist, r_elbow = [], []
     l_wrist, l_elbow = [], []
@@ -217,7 +241,7 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int, output_dir:
     fig.tight_layout()
 
     # Auto-save PNG
-    plots_dir = output_dir / 'plots'
+    plots_dir = output_dir 
     plots_dir.mkdir(parents=True, exist_ok=True)
     png_path  = plots_dir / 'baseline.png'
     fig.savefig(png_path, dpi=150, bbox_inches='tight')
@@ -226,36 +250,10 @@ def _plot_fk_verification(trajectory: np.ndarray, exercise_num: int, output_dir:
     # plt.show()
 
 
-# ---------------------------------------------------------------------------
-# Joint angles plot for canonical trajectory
-# ---------------------------------------------------------------------------
-RIGHT_JOINTS = [
-    ('r_shoulder_pitch', 0, 'right'),
-    ('r_shoulder_roll',  1, 'right'),
-    ('r_arm_yaw',        2, 'right'),
-    ('r_elbow_pitch',    3, 'right'),
-]
-LEFT_JOINTS = [
-    ('l_shoulder_pitch', 0, 'left'),
-    ('l_shoulder_roll',  1, 'left'),
-    ('l_arm_yaw',        2, 'left'),
-    ('l_elbow_pitch',    3, 'left'),
-]
-JOINT_LABELS = {
-    'r_shoulder_pitch': 'Shoulder Pitch', 'r_shoulder_roll': 'Shoulder Roll',
-    'r_arm_yaw':        'Arm Yaw',        'r_elbow_pitch':   'Elbow Pitch',
-    'l_shoulder_pitch': 'Shoulder Pitch', 'l_shoulder_roll': 'Shoulder Roll',
-    'l_arm_yaw':        'Arm Yaw',        'l_elbow_pitch':   'Elbow Pitch',
-}
-LINE_COLOR_CANONICAL = '#2ca02c'
-Y_PADDING = 5.0
-
-import matplotlib.ticker as ticker
-
 def _plot_joints_baseline(trajectory: np.ndarray, output_dir: Path, exercise_num: int) -> None:
     '''
     Plots joint angles of the baseline trajectory using the same layout as
-    plot_joints.py. Saves to output_dir/plots_joints/joints_baseline.png.
+    plot_joints.py. Saves to output_dir/joints_baseline.png.
     '''
     df     = pd.DataFrame(trajectory, columns=JOINT_COLS)
     frames = np.arange(len(df))
@@ -270,7 +268,7 @@ def _plot_joints_baseline(trajectory: np.ndarray, output_dir: Path, exercise_num
         axes = np.array([axes])
 
     fig.suptitle(
-        f'Joint angles (baseline) — exercise_{exercise_num:03d}\n'
+        f'Joint angles (baseline) - exercise_{exercise_num:03d}\n'
         f'(Y scale = robot joint limits)',
         fontsize=13, fontweight='bold', y=1.01,
     )
@@ -309,7 +307,7 @@ def _plot_joints_baseline(trajectory: np.ndarray, output_dir: Path, exercise_num
                 if row_idx == n_rows - 1:
                     ax.set_xlabel('Frame', fontsize=9)
 
-    plots_dir = output_dir / 'plots_joints'
+    plots_dir = output_dir
     plots_dir.mkdir(parents=True, exist_ok=True)
     output_path = plots_dir / 'joints_baseline.png'
     fig.tight_layout()
@@ -362,28 +360,28 @@ def main():
     print(f'Create Baseline - Exercise {args.exercise:03d}, Keyframes: {len(keyframes)}, FPS: {args.fps}')
     print(f'{"="*60}')
 
-    # --- Interpolate ---
+    # __________ Interpolate __________
     trajectory = _expand_keyframes(keyframes, args.fps)
     duration   = len(trajectory) / args.fps
     print(f'Frames    : {len(trajectory)}')
     print(f'Duration  : {duration:.2f} s')
 
-    # --- Joint limits check ---
+    # __________ Joint limits check __________
     print('\nChecking joint limits ...')
     if not _check_limits(trajectory):
         print('Trajectory violates joint limits - aborting.')
         return
 
-    # --- FK verification plot ---
+    # __________ FK verification plot __________
     print('\nPlotting FK verification ...')
     _plot_fk_verification(trajectory, args.exercise, output_dir)
 
-    # --- Save ---
+    # __________ Save __________
     path = _save_baseline(trajectory, args.fps, args.exercise, output_dir)
     print(f'\nSaved -> {path}')
     print(f'Frames: {len(trajectory)}  Duration: {duration:.2f}s')
 
-    # --- Joint angles plot for baseline ---
+    # __________ Joint angles plot for baseline __________
     print('\nPlotting baseline joint angles ...')
     _plot_joints_baseline(trajectory, output_dir, args.exercise)
 

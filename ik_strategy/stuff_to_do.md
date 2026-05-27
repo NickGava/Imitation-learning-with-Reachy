@@ -19,14 +19,14 @@ ricarica il dataset su kaggle       ✓
 
 !python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 10 and save       ✓
 !python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 25 and save       ✓
-!python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 55 and save
+!python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 55 and save       1/5
 
 !python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 10 and save     ✓
 !python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 25 and save     ✓
 !python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 55 and save
 
 !python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 10 and save     ✓
-!python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 25 and save
+!python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 25 and save     ✓
 !python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 55 and save
 
 

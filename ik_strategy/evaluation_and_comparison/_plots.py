@@ -1,12 +1,12 @@
 '''
 _plots.py
 =============================================================================
-Tutte le funzioni di visualizzazione del modulo evaluation_and_comparison.
+All visualization functions for the evaluation_and_comparison module.
 
-Sezioni:
-  A. Helpers condivisi
-  B. Plot per singolo esercizio  (chiamati da evaluate_exercise.py)
-  C. Plot per analisi modality   (chiamati da evaluate_modality.py)
+Sections:
+  A. Shared helpers
+  B. Per-exercise plots  (called by evaluate_exercise.py)
+  C. Modality analysis plots   (called by evaluate_modality.py)
 '''
 
 from pathlib import Path
@@ -24,28 +24,10 @@ from evaluation_and_comparison._config import (
 )
 
 # ============================================================================
-# A. Helpers condivisi
+# A. Shared helpers
 # ============================================================================
 
-def _grouped_bar(ax, methods_dict: Dict, arr_key: str,
-                 active_only: bool = True) -> None:
-    '''Bar chart raggruppato su active joints (o tutti i joint se active_only=False).'''
-    idx    = ACTIVE_IDX    if active_only else list(range(len(JOINT_LABELS)))
-    labels = ACTIVE_LABELS if active_only else JOINT_LABELS
-    x      = np.arange(len(labels))
-    width  = 0.75 / max(len(methods_dict), 1)
-    off0   = -(len(methods_dict) - 1) / 2 * width
-    for i, (m, res) in enumerate(methods_dict.items()):
-        ax.bar(x + off0 + i * width, res[arr_key][idx], width,
-               label=m, color=PALETTE.get(m, f'C{i}'),
-               edgecolor='white', linewidth=0.8, alpha=0.88)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
-
-
 # Active side helpers
-_RIGHT_ACTIVE_IDX    = [0, 1, 2, 3]   # indices within ACTIVE_IDX for right arm
-_LEFT_ACTIVE_IDX     = [4, 5, 6, 7]   # indices within ACTIVE_IDX for left arm
 _RIGHT_ACTIVE_LABELS = ['r_sh_p', 'r_sh_r', 'r_aw', 'r_el_p']
 _LEFT_ACTIVE_LABELS  = ['l_sh_p', 'l_sh_r', 'l_aw', 'l_el_p']
 
@@ -58,18 +40,14 @@ def _side_joint_filter(active_side):
     return list(range(8)), ACTIVE_LABELS
 
 # ============================================================================
-# B. Plot per singolo esercizio
+# B. Plot for single exercise evaluation
 # ============================================================================
 
-def plot_degradation_chain(results: Dict,
-                           output_dir: Path,
-                           exercise_num: int,
-                           modality: str,
-                           arch_variance: Optional[Dict] = None) -> None:
+def plot_degradation_chain(results: Dict, output_dir: Path, exercise_num: int, modality: str, arch_variance: Optional[Dict] = None) -> None:
     '''
-    Degradation chain: bar chart del DTW cartesiano (m) vs baseline.
-    Se arch_variance è disponibile, aggiunge errorbar (±std) sulle barre
-    delle architetture BC.
+    Degradation chain: bar chart of Cartesian DTW (m) vs baseline.
+    If arch_variance is available, adds error bars (±std) to the BC
+    architecture bars.
     '''
     CHAIN_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
     methods = [m for m in CHAIN_ORDER if m in results and 'cart_dtw' in results[m]]
@@ -80,7 +58,7 @@ def plot_degradation_chain(results: Dict,
     values = [results[m]['cart_dtw'] for m in methods]
     colors = [PALETTE.get(m, '#95a5a6') for m in methods]
 
-    # Errorbar (std): solo per architetture con varianza disponibile
+    # Errorbar (std): only for architectures with available variance data
     yerr = []
     for m in methods:
         var = (arch_variance or {}).get(m, None)
@@ -106,11 +84,11 @@ def plot_degradation_chain(results: Dict,
                 ha='center', va='bottom', fontsize=9, fontweight='bold',
                 color=bar.get_facecolor())
 
-    ax.set_ylabel('DTW cartesiano vs baseline  (m)  ↓ migliore', fontsize=11)
+    ax.set_ylabel('Cartesian DTW vs baseline  (m)  ↓ best', fontsize=11)
     ax.set_title(
-        f'Degradation Chain — Exercise {exercise_num:03d} [{modality}]\n'
-        'DTW cartesiana (m) rispetto alla baseline'
-        + ('  |  errorbar = std tra training run' if has_err else ''),
+        f'Degradation Chain - Exercise {exercise_num:03d} [{modality}]\n'
+        'cartesian DTW (m) vs baseline'
+        + ('  |  errorbar = std between training run' if has_err else ''),
         fontsize=12, fontweight='bold')
     ax.set_ylim(0, max(v + e for v, e in zip(values, yerr)) * 1.25)
     ax.spines['top'].set_visible(False)
@@ -123,9 +101,7 @@ def plot_degradation_chain(results: Dict,
     print(f'  Saved -> {p.name}')
 
 
-def plot_rmse_per_joint(results: Dict, output_dir: Path,
-                        title_suffix: str = '',
-                        active_side: str = 'both') -> None:
+def plot_rmse_per_joint(results: Dict, output_dir: Path, title_suffix: str = '', active_side: str = 'both') -> None:
     methods = {k: v for k, v in results.items() if k != 'Human demos'}
     if not methods:
         return
@@ -142,7 +118,7 @@ def plot_rmse_per_joint(results: Dict, output_dir: Path,
                edgecolor='white', linewidth=0.8, alpha=0.88)
     ax.set_xticks(x)
     ax.set_xticklabels(a_labels, rotation=45, ha='right', fontsize=9)
-    ax.set_ylabel('RMSE (gradi)', fontsize=11)
+    ax.set_ylabel('RMSE (deg)', fontsize=11)
     ax.set_title(f'RMSE per Joint vs Baseline{title_suffix}',
                  fontsize=12, fontweight='bold')
     ax.legend(fontsize=10)
@@ -161,7 +137,7 @@ def plot_pearson_per_joint(results, output_dir, title_suffix='', active_side='bo
     if not methods:
         return
 
-    # Filtra per braccio attivo, poi per joint non-costanti
+    # Filter by active arm, then by non-constant joints 
     a_idx, a_labels = _side_joint_filter(active_side)
     side_idx    = [ACTIVE_IDX[i] for i in a_idx]
 
@@ -174,7 +150,7 @@ def plot_pearson_per_joint(results, output_dir, title_suffix='', active_side='bo
     visible_labels = [a_labels[i] for i, keep in enumerate(active_mask) if keep]
 
     if not visible_idx:
-        print('  [skip] plot_pearson_per_joint: tutti i joint sono costanti nella baseline')
+        print('  [skip] plot_pearson_per_joint: all joints are constant in the baseline.')
         return
 
     x     = np.arange(len(visible_labels))
@@ -196,7 +172,7 @@ def plot_pearson_per_joint(results, output_dir, title_suffix='', active_side='bo
     ax.set_ylabel('Pearson r  (higher=better)', fontsize=11)
     ax.set_title(
         f'Pearson Correlation per Joint{title_suffix}\n'
-        '(solo joint non-costanti nella baseline; struttura temporale DTW-aligned)',
+        '(only non-constant joints in the baseline; DTW-aligned temporal structure)',
         fontsize=12, fontweight='bold')
     ax.legend(fontsize=10)
     ax.spines['top'].set_visible(False)
@@ -210,8 +186,7 @@ def plot_pearson_per_joint(results, output_dir, title_suffix='', active_side='bo
 
 
 
-def plot_smoothness(results: Dict, output_dir: Path,
-                    title_suffix: str = '') -> None:
+def plot_smoothness(results: Dict, output_dir: Path, title_suffix: str = '') -> None:
     methods = list(results.keys())
     smooth  = [results[m]['smoothness'] for m in methods]
     colors  = [PALETTE.get(m, f'C{i}') for i, m in enumerate(methods)]
@@ -222,21 +197,19 @@ def plot_smoothness(results: Dict, output_dir: Path,
     for bar, val in zip(bars, smooth):
         if np.isnan(val):
             continue
-        bar_h = bar.get_height()   # negativo
+        bar_h = bar.get_height()   # negativ
         bar_x = bar.get_x() + bar.get_width() / 2
         if abs(bar_h) > abs(ymax) * 0.08:
-            # Barra abbastanza alta: etichetta al centro della barra
             ax.text(bar_x, bar_h / 2,
                     f'{val:.4f}', ha='center', va='center',
                     fontsize=9, fontweight='bold', color='white')
         else:
-            # Barra quasi zero: etichetta appena sotto lo zero
             ax.text(bar_x, -abs(ymax) * 0.04,
                     f'{val:.4f}', ha='center', va='top',
                     fontsize=8, fontweight='bold')
-    ax.set_ylabel('Smoothness: mean(jerk)  ( pi fluido)', fontsize=10)
+    ax.set_ylabel('Smoothness: mean(jerk)  (more fluid)', fontsize=10)
     ax.set_title(
-        f'Smoothness{title_suffix}\n(misura intrinseca  non vs baseline)',
+        f'Smoothness{title_suffix}\n(intrinsic measure, not vs baseline)',
         fontsize=12, fontweight='bold')
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -281,7 +254,7 @@ def plot_velocity_profile(trajs, output_dir, baseline=None):
             ax.grid(alpha=0.3)
         fig.suptitle(
             f"Velocity Profile -- {joint_short}  [{active_side} arm]\n"
-            "(bell-shaped ~ moto umano naturale; misura intrinseca)",
+            "(bell-shaped ~ human natural movement; intrinsic measure)",
             fontsize=11, fontweight="bold")
         fig.tight_layout()
         p = output_dir / f"plot_velocity_{joint_short}.png"
@@ -290,14 +263,12 @@ def plot_velocity_profile(trajs, output_dir, baseline=None):
         print(f"  Saved -> {p.name}")
 
 # ============================================================================
-# C. Plot per analisi modality
+# C. Plot per analisis modality
 # ============================================================================
 
-def plot_modality_grouped_bar(agg: Dict[str, Dict[str, Dict]],
-                              metric: str, ylabel: str, title: str,
-                              output_path: Path) -> None:
+def plot_modality_grouped_bar(agg: Dict[str, Dict[str, Dict]], metric: str, ylabel: str, title: str, output_path: Path) -> None:
     '''
-    Grouped bar: asse X = architetture, colori = modalit  (Stereo / Mixed / Mono).
+    Grouped bar: X axis = architectures, colors = modality  (Stereo / Mixed / Mono).
     agg[modality][arch] = metrics_dict
     '''
     archs = list(ARCHITECTURES.keys())
@@ -331,9 +302,8 @@ def plot_modality_grouped_bar(agg: Dict[str, Dict[str, Dict]],
     print(f'  Saved -> {output_path.name}')
 
 
-def plot_modality_rmse_heatmap(agg: Dict[str, Dict[str, Dict]],
-                               arch: str, output_path: Path) -> None:
-    '''Heatmap RMSE per joint  modalit  per una singola architettura.'''
+def plot_modality_rmse_heatmap(agg: Dict[str, Dict[str, Dict]], arch: str, output_path: Path) -> None:
+    '''Heatmap RMSE per joint modality for a singol architecture.'''
     mods = list(MODALITY_GROUPS.keys())
     data = np.array([
         agg.get(mod, {}).get(arch, {}).get(
@@ -341,7 +311,8 @@ def plot_modality_rmse_heatmap(agg: Dict[str, Dict[str, Dict]],
         )
         for mod in mods
     ])
-    # Estrai solo gli active joint se i vettori sono lunghi 16
+    
+    # Extract only active joints if the vectors are 16-long 
     if data.shape[1] == 16:
         data = data[:, ACTIVE_IDX]
 
@@ -350,7 +321,7 @@ def plot_modality_rmse_heatmap(agg: Dict[str, Dict[str, Dict]],
 
     fig, ax = plt.subplots(figsize=(10, 2.0 + len(mods) * 0.7))
     im = ax.imshow(data, aspect='auto', cmap='YlOrRd', vmin=0, vmax=vmax)
-    plt.colorbar(im, ax=ax, label='RMSE (gradi)')
+    plt.colorbar(im, ax=ax, label='RMSE (deg)')
     ax.set_xticks(range(len(ACTIVE_LABELS)))
     ax.set_xticklabels(ACTIVE_LABELS, rotation=40, ha='right', fontsize=9)
     ax.set_yticks(range(len(mods)))
@@ -369,11 +340,9 @@ def plot_modality_rmse_heatmap(agg: Dict[str, Dict[str, Dict]],
     print(f'  Saved -> {output_path.name}')
 
 
-def plot_per_exercise_lines(ex_results: Dict[int, Dict[str, Dict]],
-                            metric: str, ylabel: str, title: str,
-                            output_path: Path) -> None:
+def plot_per_exercise_lines(ex_results: Dict[int, Dict[str, Dict]], metric: str, ylabel: str, title: str, output_path: Path) -> None:
     '''
-    Line plot: asse X = tipo esercizio (15), una linea per (architettura  modalit ).
+    Line plot: X axis = exercise types (15), a line for each (architecture modality).
     ex_results[exercise_num][arch] = metrics_dict
     '''
     ex_types = sorted({get_exercise_type(n) for n in ex_results})
@@ -408,18 +377,16 @@ def plot_per_exercise_lines(ex_results: Dict[int, Dict[str, Dict]],
 
 
 # ============================================================================
-# D. Plot cartesiani (per singolo esercizio)
+# D. Cartesian plots (for single exercise)
 # ============================================================================
 
-def plot_cartesian_pearson(results: Dict, output_dir: Path,
-                            title_suffix: str = '',
-                            active_side: str = 'both') -> None:
+def plot_cartesian_pearson(results: Dict, output_dir: Path, title_suffix: str = '', active_side: str = 'both') -> None:
     '''
-    Bar chart della Pearson correlation per coordinata cartesiana del polso.
-    6 coordinate: r_wrist_X, r_wrist_Y, r_wrist_Z, l_wrist_X, l_wrist_Y, l_wrist_Z.
+    Bar chart of Pearson correlation per Cartesian wrist coordinate.
+    6 coordinates: r_wrist_X, r_wrist_Y, r_wrist_Z, l_wrist_X, l_wrist_Y, l_wrist_Z.
 
-    A differenza della versione joint-space, qui tutte le coordinate hanno
-    valori significativi (il polso si muove sempre in 3D).
+    Unlike the joint-space version, all coordinates carry meaningful values
+    here (the wrist always moves in 3D).
     '''
     methods = {k: v for k, v in results.items()
                if k != 'Human demos' and 'cart_pearson_rw' in v}
@@ -439,13 +406,13 @@ def plot_cartesian_pearson(results: Dict, output_dir: Path,
             for res in methods.values()
         ])
 
-    # Mostra solo le coordinate dove almeno un metodo ha |pearson| > 0.05
+    # Shows only coordinates where at least one method has |pearson| > 0.05
     visible_mask   = np.any(np.abs(all_vals) > 0.05, axis=0)
     visible_coords = [l for l, v in zip(COORD_LABELS, visible_mask) if v]
     visible_all    = all_vals[:, visible_mask]
 
     if not visible_coords:
-        print('  [skip] plot_cartesian_pearson: tutte le coordinate sono costanti')
+        print('  [skip] plot_cartesian_pearson: all the coordinates are constant')
         return
 
     x     = np.arange(len(visible_coords))
@@ -462,10 +429,10 @@ def plot_cartesian_pearson(results: Dict, output_dir: Path,
     ax.set_ylim(-1.05, 1.15)
     ax.set_xticks(x)
     ax.set_xticklabels(visible_coords, fontsize=10)
-    ax.set_ylabel('Pearson r  ( meglio)', fontsize=11)
+    ax.set_ylabel('Pearson r  (better)', fontsize=11)
     ax.set_title(
         f'Pearson Correlation  Wrist Cartesian Coordinates{title_suffix}\n'
-        '(struttura temporale, DTW-aligned; invariante alla ridondanza cinematica)',
+        '(temporal structure, DTW-aligned; invariant to kinematic redundancy)',
         fontsize=12, fontweight='bold')
     ax.legend(fontsize=10)
     ax.spines['top'].set_visible(False)
@@ -479,20 +446,20 @@ def plot_cartesian_pearson(results: Dict, output_dir: Path,
 
 
 def plot_cartesian_trajectories(trajs, output_dir, title_suffix='', active_side='both'):
-    """Wrist e Elbow Cartesian trajectories per il braccio attivo (3x2 grid)."""
+    """Wrist e Elbow Cartesian trajectories for the active arm (3x2 grid)."""
     from evaluation_and_comparison._metrics import _to_cartesian
 
     AXIS_LABELS = ['X (forward, m)', 'Y (lateral, m)', 'Z (up, m)']
 
-    # Seleziona il braccio attivo
+    # Select active arm
     side = ('right' if active_side == 'right'
             else 'left' if active_side == 'left'
             else 'left')   # default: left
 
-    # Colonne: wrist (0) e elbow (1)
+    # Columns: wrist (0) e elbow (1)
     col_titles = [f'{side.capitalize()} wrist', f'{side.capitalize()} elbow']
 
-    # Calcola FK per ogni traiettoria
+    # Compute FK for each trajectory 
     cart = {}
     for label, traj in trajs.items():
         if traj is None:
@@ -505,7 +472,7 @@ def plot_cartesian_trajectories(trajs, output_dir, title_suffix='', active_side=
         return
 
     fig, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=False)
-    fig.suptitle(f'Cartesian Trajectories — {side.capitalize()} arm{title_suffix}',
+    fig.suptitle(f'Cartesian Trajectories - {side.capitalize()} arm{title_suffix}',
                  fontsize=13, fontweight='bold')
 
     for col_i, endpoint in enumerate(['wrist', 'elbow']):
@@ -538,7 +505,7 @@ def plot_cartesian_trajectories(trajs, output_dir, title_suffix='', active_side=
 
 
 def plot_cartesian_rmse(results, output_dir, title_suffix='', active_side='both'):
-    """Bar chart RMSE cartesiano per endpoint del braccio attivo (in metri)."""
+    """Bar chart RMSE cartesian per endpoint of the active arm (meters)."""
     methods = {k: v for k, v in results.items()
                if 'cart_rmse_r_wrist' in v and k != 'Human demos'}
     if not methods:
@@ -568,10 +535,10 @@ def plot_cartesian_rmse(results, output_dir, title_suffix='', active_side='both'
 
     ax.set_xticks(x)
     ax.set_xticklabels(ep_labels, fontsize=11)
-    ax.set_ylabel('RMSE (metri)  (lower=better)', fontsize=11)
+    ax.set_ylabel('RMSE (meters)  (lower=better)', fontsize=11)
     ax.set_title(
-        f'RMSE Cartesiano per Endpoint{title_suffix}\n'
-        '(invariante alla ridondanza cinematica)',
+        f'RMSE Cartesian per Endpoint{title_suffix}\n'
+        '(invariant to kinematic redundancy)',
         fontsize=12, fontweight='bold')
     ax.legend(fontsize=10)
     ax.spines['top'].set_visible(False)
@@ -587,8 +554,8 @@ def plot_cartesian_rmse(results, output_dir, title_suffix='', active_side='both'
 
 def plot_cartesian_velocity(trajs, output_dir, baseline=None):
     """
-    Profilo di velocita cartesiana: wrist e elbow in m/frame.
-    Solo il braccio attivo (da baseline). Wrist continua, Elbow tratteggiata.
+    Cartesian velocity profile: wrist and elbow in m/frame.
+    Only the active arm (from baseline). Wrist continuous, Elbow dashed.
     """
     from evaluation_and_comparison._metrics import _to_cartesian
 
@@ -632,7 +599,7 @@ def plot_cartesian_velocity(trajs, output_dir, baseline=None):
 
         fig.suptitle(
             f'Cartesian Velocity Profile -- {side_tag} arm  [wrist / elbow --]\n'
-            '(bell-shaped = moto umano naturale; misura in metri)',
+            '(bell-shaped = human-like motion; measurement in meters)',
             fontsize=11, fontweight='bold')
         fig.tight_layout()
         p = output_dir / f'plot_cartesian_velocity_{side_tag.lower()}_arm.png'
@@ -641,21 +608,19 @@ def plot_cartesian_velocity(trajs, output_dir, baseline=None):
         print(f'  Saved -> {p.name}')
 
 
-def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
-                          output_dir: Path,
-                          active_side: str = 'left') -> None:
+def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]], output_dir: Path, active_side: str = 'left') -> None:
     '''
-    Salva un file HTML interattivo con 5 subplot 3D (uno per metodo).
-    Ogni subplot mostra polso (linea continua) e gomito (linea tratteggiata)
-    del braccio attivo. Aprire nel browser per ruotare/zoomare.
+    Saves an interactive HTML file with 5 3D subplots (one per method).
+    Each subplot shows the wrist (solid line) and elbow (dashed line)
+    of the active arm. Open in a browser to rotate/zoom.
     Output: exercise_XXX/n_XX/evaluation/plot_3d_trajectories.html
     '''
     try:
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
     except ImportError:
-        print("  [skip] plot_3d_trajectories: plotly non installato. "
-              "Installare con: pip install plotly")
+        print("  [skip] plot_3d_trajectories: plotly not installed. "
+              "Install with: pip install plotly")
         return
 
     from evaluation_and_comparison._metrics import _to_cartesian
@@ -666,7 +631,7 @@ def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
     if not items:
         return
 
-    # Calcola FK per ogni metodo
+    # Compute FK for each method
     cart_data = {}
     for label, traj in items:
         rw, re, lw, le = _to_cartesian(traj)
@@ -674,7 +639,7 @@ def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
         elbow = re if active_side == 'right' else le
         cart_data[label] = {'wrist': wrist, 'elbow': elbow}
 
-    # Assi globali consistenti tra i subplot
+    # Global axis consistent across subplots
     all_pts = np.vstack([v for d in cart_data.values() for v in d.values()])
     pad = 0.05
     axis_range = {
@@ -742,7 +707,7 @@ def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
                 scene=scene_n,
             ), row=1, col=col_i + 1)
 
-            # Markers inizio e fine
+            # Markers start and end points
             for pt, sym in [(pts[0], 'circle'), (pts[-1], 'square')]:
                 fig.add_trace(go.Scatter3d(
                     x=[pt[0]], y=[pt[1]], z=[pt[2]],
@@ -777,20 +742,16 @@ def plot_3d_trajectories(trajs: Dict[str, Optional[np.ndarray]],
 
 
 
-def plot_summary_heatmap(results: Dict, output_dir: Path,
-                          title_suffix: str = '',
-                          active_side: str = 'both',
-                          human_bounds: Optional[Dict] = None,
-                          arch_variance: Optional[Dict] = None) -> None:
+def plot_summary_heatmap(results: Dict, output_dir: Path, title_suffix: str = '', active_side: str = 'both', human_bounds: Optional[Dict] = None, arch_variance: Optional[Dict] = None) -> None:
     '''
-    Heatmap riassuntiva: righe = metodi, colonne = metriche scalari chiave.
+    Summary heatmap: rows = methods, columns = key scalar metrics.
 
-    Bounds per colonna (da human_bounds, calcolati sulle demo individuali):
-      - verde = best human demo performance su quella metrica
-      - rosso = worst human demo performance
-      - grigio = oltre il bound peggiore
-      - Pearson: fisso [0, 1]
-    Human demos non appaiono come riga.
+    Per-column bounds (from human_bounds, computed on individual demos):
+      - green = best human demo performance on that metric
+      - red   = worst human demo performance
+      - gray  = beyond the worst bound
+      - Pearson: fixed [0, 1]
+    Human demos do not appear as a row.
     '''
     if human_bounds is None:
         human_bounds = {}
@@ -821,10 +782,10 @@ def plot_summary_heatmap(results: Dict, output_dir: Path,
     if not methods:
         return
 
-    human_r = results.get('Human demos', {})  # usato solo come fallback
+    human_r = results.get('Human demos', {})  # fallback
     n_m, n_c = len(methods), len(METRICS)
 
-    # Matrice dati e scores
+    # Matrix of data and scores
     data   = np.full((n_m, n_c), np.nan)
     scores = np.full((n_m, n_c), np.nan)   # [0,1]=valid, -1=out-of-bounds
 
@@ -842,7 +803,7 @@ def plot_summary_heatmap(results: Dict, output_dir: Path,
 
     fig, ax = plt.subplots(figsize=(max(10, n_c * 1.5), max(3.5, n_m * 1.1)))
 
-    # Imshow solo per celle valide [0,1]
+    # Imshow only for valid cells [0,1]
     display = np.where(scores == -1, np.nan, scores)
     im = ax.imshow(display, aspect='auto', cmap='RdYlGn', vmin=0, vmax=1)
 
@@ -887,13 +848,13 @@ def plot_summary_heatmap(results: Dict, output_dir: Path,
                         linespacing=1.3)
 
     cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.04)
-    cbar.set_label('Performance  (verde = migliore)', fontsize=9)
+    cbar.set_label('Performance  (green = best)', fontsize=9)
     cbar.set_ticks([0, 0.5, 1])
-    cbar.set_ticklabels(['peggior\ndemo', 'medio', 'miglior\ndemo'], fontsize=8)
+    cbar.set_ticklabels(['worst\ndemo', 'medium', 'best\ndemo'], fontsize=8)
 
     ax.set_title(
-        f'Riepilogo Metriche{title_suffix}\n'
-        '(verde/rosso = range demo umane  |  grigio = oltre il limite peggiore)',
+        f'Summary Metrics{title_suffix}\n'
+        '(green/red = range human demos  |  gray = beyond worst limit)',
         fontsize=12, fontweight='bold', pad=18)
 
     for i in range(n_m - 1):
@@ -908,16 +869,15 @@ def plot_summary_heatmap(results: Dict, output_dir: Path,
     print(f'  Saved -> {p.name}')
 
 # ============================================================================
-# Shared helpers per heatmap + spider (bounds basati su Human demos)
+# Shared helpers per heatmap + spider (bounds based on Human demos)
 # ============================================================================
 
-def _get_metric_bounds(key: str, lower_is_better: bool,
-                       bound_type: str, human_bounds: Dict) -> tuple:
+def _get_metric_bounds(key: str, lower_is_better: bool, bound_type: str, human_bounds: Dict) -> tuple:
     '''
-    Returns (best, worst) per una metrica.
-      bound_type='human'    → (best_human_demo, worst_human_demo) da human_bounds
-      bound_type='fixed_01' → (1.0, 0.0) per Pearson
-    Se la chiave non è in human_bounds, ritorna (nan, nan) → celle grigie.
+    Returns (best, worst) for a metric.
+      bound_type='human'    → (best_human_demo, worst_human_demo) from human_bounds
+      bound_type='fixed_01' → (1.0, 0.0) for Pearson
+    If the key is not in human_bounds, returns (nan, nan) → gray cells.
     '''
     if bound_type == 'fixed_01':
         return (1.0, 0.0)
@@ -925,14 +885,13 @@ def _get_metric_bounds(key: str, lower_is_better: bool,
     return (best, worst)
 
 
-def _score_value(val: float, best: float, worst: float,
-                 lower_is_better: bool) -> float:
+def _score_value(val: float, best: float, worst: float, lower_is_better: bool) -> float:
     '''
-    Normalizza val in [0, 1] dove:
-      1 = best human demo performance  (verde)
-      0 = worst human demo performance (rosso)
-    Ritorna -1 se val è oltre il bound peggiore (cella grigia).
-    Ritorna np.nan se val, best o worst sono NaN.
+    Normalizes val to [0, 1] where:
+      1 = best human demo performance  (green)
+      0 = worst human demo performance (red)
+    Returns -1 if val exceeds the worst bound (gray cell).
+    Returns np.nan if val, best, or worst are NaN.
     '''
     if np.isnan(val) or np.isnan(best) or np.isnan(worst):
         return np.nan
@@ -951,18 +910,15 @@ def _score_value(val: float, best: float, worst: float,
         return float(np.clip((val - worst) / span, 0.0, 1.0))
 
 
-def plot_spider_chart(results: Dict, output_dir: Path,
-                      title_suffix: str = '',
-                      active_side: str = 'both',
-                      human_bounds: Optional[Dict] = None) -> None:
+def plot_spider_chart(results: Dict, output_dir: Path, title_suffix: str = '', active_side: str = 'both', human_bounds: Optional[Dict] = None) -> None:
     '''
-    Spider / radar chart — tutte metriche cartesiane (lato attivo).
-    Assi: DTW cart, RMSE wrist, RMSE elbow, Peak wrist, Pearson cart.
+    Spider / radar chart - all Cartesian metrics (active side).
+    Axes: DTW cart, RMSE wrist, RMSE elbow, Peak wrist, Pearson cart.
 
     Score in [0, 1]:
-      1 = miglior demo umana su quella metrica  (verde esterno)
-      0 = peggior demo umana                    (rosso centro)
-    Valori fuori bound → clampati a 0. Human demos non mostrate.
+      1 = best human demo on that metric   (green outer)
+      0 = worst human demo                 (red center)
+    Out-of-bound values → clamped to 0. Human demos not shown.
     '''
     if human_bounds is None:
         human_bounds = {}
@@ -1003,7 +959,7 @@ def plot_spider_chart(results: Dict, output_dir: Path,
             val         = results[method].get(key, np.nan)
             best, worst = _get_metric_bounds(key, lib, bt, human_bounds)
             sv          = _score_value(val, best, worst, lib)
-            # out-of-bounds o nan → 0 (al pavimento)
+            # out-of-bounds or nan → 0
             if isinstance(sv, float) and not np.isnan(sv) and sv != -1.0:
                 scores.append(float(np.clip(sv, 0.0, 1.0)))
             else:
@@ -1025,8 +981,8 @@ def plot_spider_chart(results: Dict, output_dir: Path,
 
     ax.legend(loc='upper right', bbox_to_anchor=(1.40, 1.18), fontsize=10)
     ax.set_title(
-        f'Spider Chart — Cartesian Performance{title_suffix}\n'
-        '(1 = miglior demo umana,  0 = peggior demo umana)',
+        f'Spider Chart - Cartesian Performance{title_suffix}\n'
+        '(1 = best human demo,  0 = worst human demo)',
         fontsize=12, fontweight='bold', pad=22)
 
     fig.tight_layout()

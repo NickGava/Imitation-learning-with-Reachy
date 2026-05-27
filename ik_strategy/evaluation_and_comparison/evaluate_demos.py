@@ -1,27 +1,27 @@
 """
 evaluate_demos.py
 =============================================================================
-Analisi della sensibilita al numero di dimostrazioni disponibili.
+Sensitivity analysis with respect to the number of available demonstrations.
 
-Risponde alla domanda: quante demo (soggetti) bastano?
-Il sistema degrada significativamente passando da 55 a 25 o a 10 demo?
+Answers the question: how many demos (subjects) are sufficient?
+Does the system degrade significantly going from 55 to 25 or 10 demos?
 
-Prerequisito: aver gia eseguito per ogni split:
+Prerequisite: having already run for each split:
   py run_bc_approach.py --exercise X --n-demos 10
   py run_bc_approach.py --exercise X --n-demos 25
   py run_bc_approach.py --exercise X --n-demos 55
   py -m evaluation_and_comparison.evaluate --exercise X --n-demos 10 25 55
 
-Il file legge i results_summary.csv gia calcolati — non riesegue inference.
+Reads the already-computed results_summary.csv files - does not rerun inference.
 
-Output PER ESERCIZIO (in dataset/exercise_NNN/evaluation_demos/):
+Output PER EXERCISE (in dataset/exercise_NNN/evaluation_demos/):
   results_by_n_demos.csv
-  plot_cart_dtw_vs_demos.png  (e altri per metrica)
+  plot_cart_dtw_vs_demos.png  (and others per metric)
 
-Output GLOBALE (in data/evaluation_demos/):
+GLOBAL output (in data/evaluation_demos/):
   results_all_exercises.csv
   results_aggregated.csv
-  plot_cart_dtw_vs_demos.png  (media su tutti gli esercizi)
+  plot_cart_dtw_vs_demos.png  (averaged over all exercises)
 
 Usage:
   py -m evaluation_and_comparison.evaluate_demos --exercise 21
@@ -44,8 +44,7 @@ from utilities.split_utils import N_DEMOS_SPLITS, split_name
 from evaluation_and_comparison._config import PALETTE
 
 
-# Candidati metriche — solo quelle con valori non-NaN nel CSV vengono plottate
-# (automaticamente filtra il braccio inattivo)
+# Candidate metrics - only those with non-NaN values in the CSV are plotted
 METRICS_CANDIDATES = [
     ('cart_dtw',          'DTW (m)',          True),
     ('cart_rmse_wrist',   'RMSE wrist (m)',   True),
@@ -62,7 +61,7 @@ METHOD_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
 def _load_split_results(exercise_dir: Path, n_demos: int) -> Optional[pd.DataFrame]:
     csv_path = exercise_dir / split_name(n_demos) / 'evaluation' / 'results_summary.csv'
     if not csv_path.exists():
-        print(f'  [!] Mancante: {split_name(n_demos)}/evaluation/results_summary.csv')
+        print(f'  [!] Missing: {split_name(n_demos)}/evaluation/results_summary.csv')
         return None
     df = pd.read_csv(csv_path)
     df['n_demos']      = n_demos
@@ -71,8 +70,7 @@ def _load_split_results(exercise_dir: Path, n_demos: int) -> Optional[pd.DataFra
     return df
 
 
-def _plot_metrics_vs_demos(df: pd.DataFrame, output_dir: Path,
-                            title_suffix: str = '') -> None:
+def _plot_metrics_vs_demos(df: pd.DataFrame, output_dir: Path, title_suffix: str = '') -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     x_ticks = sorted(df['n_demos'].unique())
     methods  = [m for m in METHOD_ORDER
@@ -97,7 +95,7 @@ def _plot_metrics_vs_demos(df: pd.DataFrame, output_dir: Path,
             continue
 
         direction = '(lower=better)' if lower_is_better else '(higher=better)'
-        ax.set_xlabel('N dimostrazioni', fontsize=11)
+        ax.set_xlabel('N demos', fontsize=11)
         ax.set_ylabel(ylabel, fontsize=11)
         ax.set_xticks(x_ticks)
         ax.set_xticklabels([f'{n}\n({n//5} sogg.)' for n in x_ticks], fontsize=10)
@@ -117,18 +115,18 @@ def _plot_metrics_vs_demos(df: pd.DataFrame, output_dir: Path,
 def run_exercise_demos_analysis(exercise_num: int) -> Optional[pd.DataFrame]:
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{exercise_num:03d}'
     if not exercise_dir.is_dir():
-        print(f'  [!] exercise_{exercise_num:03d} non trovato.')
+        print(f'  [!] exercise_{exercise_num:03d} not found.')
         return None
 
     print(f'\n{"="*60}')
-    print(f'  Exercise {exercise_num:03d} — demos sensitivity')
+    print(f'  Exercise {exercise_num:03d} - demos sensitivity')
     print(f'{"="*60}')
 
     dfs = [_load_split_results(exercise_dir, n) for n in N_DEMOS_SPLITS]
     dfs = [d for d in dfs if d is not None]
 
     if len(dfs) < 2:
-        print('  Meno di 2 split — skip.')
+        print('  Less than 2 splits - skip.')
         return None
 
     all_data = pd.concat(dfs, ignore_index=True)
@@ -149,7 +147,7 @@ def run_demos_analysis(exercise_nums: List[int]) -> None:
     all_results = [r for r in all_results if r is not None]
 
     if not all_results:
-        print('\nNessun risultato. Eseguire prima run_bc_approach + evaluate.')
+        print('\nNo results found. Please run run_bc_approach + evaluate first.')
         return
 
     global_df = pd.concat(all_results, ignore_index=True)
@@ -167,15 +165,14 @@ def run_demos_analysis(exercise_nums: List[int]) -> None:
     agg.to_csv(p, index=False)
     print(f'Saved -> {p.name}')
 
-    print('\nPlot globali (media su tutti gli esercizi) ...')
+    print('\nGlobal plot  (avg on all the exercises) ...')
     _plot_metrics_vs_demos(agg, out_dir,
                            title_suffix=' -- All exercises (mean)')
     print(f'\nOutput globale -> {out_dir}')
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Ablation study: sensibilita al numero di dimostrazioni.')
+    parser = argparse.ArgumentParser(description='Ablation study: sensitivity to the number of demonstrations.')
     parser.add_argument('--exercise', type=int, nargs='+', metavar='N')
     parser.add_argument('--all', action='store_true')
     args = parser.parse_args()
@@ -188,7 +185,7 @@ def main():
     elif args.exercise:
         exercise_nums = args.exercise
     else:
-        parser.error('Specificare --exercise N [N ...] oppure --all.')
+        parser.error('Specify --exercise N [N ...] or --all.')
 
     run_demos_analysis(exercise_nums)
     print('\nDone.')

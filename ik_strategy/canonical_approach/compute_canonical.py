@@ -10,14 +10,16 @@ Input: all data/landmarks/subject_XXX/exercise_XXX/video_XXX/joint_ik.csv for th
 Output: data/dataset/exercise_XXX/<split>/canonical.csv
         data/dataset/exercise_XXX/<split>/canonicalShape.csv
 
-Usage:
-  python compute_canonical.py                           # all exercises, all subjects
-  python compute_canonical.py --exercise 1              # only exercise 1
-  python compute_canonical.py --exercise 1 --subject 2  # only subject 2, exercise 1
-  python compute_canonical.py --max-iter 50             # change number of DBA iterations (default: 30)
-  python compute_canonical.py --reach 30                # ShapeDTW neighborhood size (default: 15)
-  python compute_canonical.py --amplitude-percentile 95 # use 95th percentile for rescaling (default: 80)
-  python compute_canonical.py --no-amplitude-rescale    # disable amplitude rescaling
+Args    
+    --exercise  -> type=int, default=None, Only process this exercise number. Default: all exercises found in landmarks/
+    --subject   -> type=int, default=None, Only use this subject. Default: all subjects
+    --max-iter  -> type=int, default=DEFAULT_MAX_ITER, Maximum ShapeDBA iterations
+    --reach     -> type=int, default=DEFAULT_REACH, ShapeDTW neighborhood size
+    --no-amplitude-rescale  -> action='store_true', Disable amplitude rescaling
+    --amplitude-percentile  -> type=float, default=80.0, Percentile used when rescaling amplitude
+    --no-smooth -> action='store_true', Disable post-ShapeDBA smoothing of the canonical
+    --smooth-window -> type=int, default=11,Window size for median + Savitzky-Golay smoothing, must be odd
+    --n-demos   -> type=int, default=55, choices=[10,25,55]
 
 Amplitude rescaling (enabled by default):
   Before DBA/ShapeDBA, each sequence is normalized per-joint to [0, 1] so that the algorithm
@@ -135,12 +137,7 @@ def _resample_sequence(arr: np.ndarray, target_len: int) -> np.ndarray:
     return interp1d(t_old, arr, axis=0, kind='linear')(t_new)
 
 
-def _run_shape_dba(
-    arrays: List[np.ndarray],
-    max_iter: int,
-    label: str,
-    reach: int = DEFAULT_REACH,
-) -> np.ndarray:
+def _run_shape_dba(arrays: List[np.ndarray], max_iter: int, label: str, reach: int = DEFAULT_REACH) -> np.ndarray:
     '''
     Runs ShapeDBA on a list of numpy arrays and returns the barycenter sequence.
 
@@ -161,7 +158,7 @@ def _run_shape_dba(
     lengths    = np.array([len(a) for a in arrays])
     median_len = int(np.median(lengths))
 
-    # Sequence closest to median — used as init barycenter
+    # Sequence closest to median - used as init barycenter
     init_idx = int(np.argmin(np.abs(lengths - median_len)))
     init_seq = arrays[init_idx]
 
@@ -191,12 +188,7 @@ def _run_shape_dba(
     return barycenter
 
 
-def _run_dba(
-    arrays: List[np.ndarray],
-    max_iter: int,
-    label: str,
-    **_kwargs,  # absorbs unused kwargs (e.g. reach) for uniform call signature
-) -> np.ndarray:
+def _run_dba(arrays: List[np.ndarray], max_iter: int, label: str, **_kwargs) -> np.ndarray:
     '''
     Runs standard DBA (DTW Barycenter Averaging) via tslearn.
 
@@ -220,7 +212,7 @@ def _run_dba(
           f'max_iter={max_iter}) ...', flush=True)
 
     resampled = [_resample_sequence(a, median_len) for a in arrays]
-    X = np.stack(resampled, axis=0)   # (S, L, D) — tslearn convention
+    X = np.stack(resampled, axis=0)   # (S, L, D) - tslearn convention
 
     barycenter = dtw_barycenter_averaging(X, max_iter=max_iter)  # (L, D)
     print(f'Done. Canonical length: {len(barycenter)} frames')
@@ -230,12 +222,7 @@ def _run_dba(
 # ---------------------------------------------------------------------------
 # Output helper
 # ---------------------------------------------------------------------------
-def _save_canonical_csv(
-    canonical_joints: np.ndarray,
-    canonical_head: np.ndarray,
-    sequences: List[pd.DataFrame],
-    output_path: Path,
-) -> None:
+def _save_canonical_csv(canonical_joints: np.ndarray, canonical_head: np.ndarray, sequences: List[pd.DataFrame], output_path: Path) -> None:
     '''
     Builds the output DataFrame from canonical joints + head and saves it.
 
@@ -275,7 +262,7 @@ def _normalize_amplitude(arrays: List[np.ndarray]):
     Normalises each sequence per-joint to [0, 1].
 
     For joints that never move in a given sequence (max == min), the column is
-    left at 0.0 to avoid division by zero — DBA will produce 0.0 for that joint,
+    left at 0.0 to avoid division by zero - DBA will produce 0.0 for that joint,
     which is then correctly rescaled back.
 
     Parameters:
@@ -283,8 +270,8 @@ def _normalize_amplitude(arrays: List[np.ndarray]):
 
     Returns:
         norm_arrays : list of (N_i, D) arrays in [0, 1]
-        seq_mins    : (S, D) array — per-sequence per-joint min values
-        seq_maxs    : (S, D) array — per-sequence per-joint max values
+        seq_mins    : (S, D) array - per-sequence per-joint min values
+        seq_maxs    : (S, D) array - per-sequence per-joint max values
     '''
     seq_mins = np.array([a.min(axis=0) for a in arrays])   # (S, D)
     seq_maxs = np.array([a.max(axis=0) for a in arrays])   # (S, D)
@@ -298,12 +285,7 @@ def _normalize_amplitude(arrays: List[np.ndarray]):
     return norm_arrays, seq_mins, seq_maxs
 
 
-def _rescale_canonical(
-    canonical_norm: np.ndarray,
-    seq_mins: np.ndarray,
-    seq_maxs: np.ndarray,
-    percentile: float,
-) -> np.ndarray:
+def _rescale_canonical(canonical_norm: np.ndarray, seq_mins: np.ndarray, seq_maxs: np.ndarray, percentile: float) -> np.ndarray:
     '''
     Rescales a [0, 1]-normalised canonical back to physical units.
 
@@ -341,7 +323,7 @@ def _smooth_canonical(canonical: np.ndarray, window: int) -> np.ndarray:
     preserving the overall shape and peak amplitudes.
 
     Parameters:
-        canonical : (L, D) array — canonical joint angles
+        canonical : (L, D) array - canonical joint angles
         window    : filter window size (must be odd, >= 3)
 
     Returns:

@@ -1,7 +1,7 @@
 '''
 evaluate_exercise.py
 =============================================================================
-Valutazione completa di un singolo esercizio.
+Complete evaluation of a single exercise
 
 Output (in data/dataset/exercise_NNN/n_XX/evaluation/):
     results_summary.csv
@@ -15,7 +15,7 @@ Output (in data/dataset/exercise_NNN/n_XX/evaluation/):
     plot_summary_heatmap.png
     plot_spider_chart.png
 
-Uso standalone:
+Standalone usage:
     py -m evaluation_and_comparison.evaluate_exercise --exercise 1
     py -m evaluation_and_comparison.evaluate_exercise --exercise 1 --n-demos 10
 '''
@@ -45,14 +45,12 @@ from evaluation_and_comparison._plots   import (
 )
 
 
-def run_exercise_evaluation(exercise_num: int,
-                             n_demos: int = 55,
-                             n_steps: Optional[int] = None) -> Dict[str, Dict]:
+def run_exercise_evaluation(exercise_num: int, n_demos: int = 55, n_steps: Optional[int] = None) -> Dict[str, Dict]:
     '''
-    Valuta un singolo esercizio con tutte le architetture disponibili.
+    Evaluate a single exercise with all available architectures.
 
-    Ritorna il dict results (method → metrics) per eventuale riutilizzo
-    nell'analisi modality (evita di ricalcolare due volte).
+    Returns the results dict (method → metrics) for optional reuse
+    in the modality analysis (avoids recomputing twice).
     '''
     exercise_name  = f'exercise_{exercise_num:03d}'
     dataset_dir    = DATA_ROOT / 'dataset' / exercise_name
@@ -66,13 +64,13 @@ def run_exercise_evaluation(exercise_num: int,
     print(f'  Exercise {exercise_num:03d}  [{modality}]  split={split_name(n_demos)}')
     print(f'{"="*65}')
 
-    # --- Caricamento dati ---------------------------------------------------
-    baseline = load_baseline(dataset_dir)       # baseline resta nella root
+    # _____ Loading data _____
+    baseline = load_baseline(dataset_dir)       # baseline stays in the root folder
     if baseline is None:
-        print('  SKIP: baseline.csv mancante.')
+        print('  SKIP: baseline.csv missing.')
         return {}
 
-    # Determina braccio attivo subito — serve sia per metriche che per plot
+    # Choose active arm - needed for metrics and plots
     stds         = np.std(baseline, axis=0)
     active_joint = int(np.argmax(stds))
     active_side  = 'right' if active_joint < 8 else 'left'
@@ -82,18 +80,18 @@ def run_exercise_evaluation(exercise_num: int,
     canonical_shape  = load_canonical_shape(split_dir)  # ShapeDBA
     human_demos      = load_human_demos(landmarks_root, exercise_num, n_demos=n_demos)
 
-    # --- Caricamento traiettorie BC pre-generate ----------------------------
-    print('\nCaricamento traiettorie BC ...')
+    # _____ Loading BC trajectories pre-generated _____
+    print('\nLoading trajectories BC ...')
     bc_trajs: Dict[str, Optional[object]] = {}
     for arch_name in ARCHITECTURES:
         bc_trajs[arch_name] = load_bc_trajectory(split_dir, arch_name)
 
-    # --- Calcolo metriche ---------------------------------------------------
-    print('\nCalcolo metriche ...')
+    # _____ Metrics computation _____
+    print('\nMetrics computation...')
     results: Dict[str, Dict] = {}
 
-    # Human demos — solo come riferimento per i bounds, non mostrate nei grafici
-    # Calcola metriche per-demo per estrarre best/worst individuale per ogni metrica
+    # Human demos - used only as reference for bounds, not shown in plots
+    # Compute per-demo metrics to extract individual best/worst for each metric
     _LOWER_IS_BETTER_KEYS = {
         'dtw_distance', 'rmse_mean', 'peak_error_mean',
         'cart_dtw',
@@ -114,7 +112,7 @@ def run_exercise_evaluation(exercise_num: int,
               f'RMSE={r["rmse_mean"]:>6.2f}  DTW_cart={r["cart_dtw"]:.4f}m  '
               f'Smooth={r["smoothness"]:.4f}')
 
-        # Raccogli valori per-demo e calcola (best, worst)
+        # Collect per-demo values and compute (best, worst)
         per_demo_vals: Dict[str, List[float]] = {}
         for combo in merged:
             for key, val in combo.items():
@@ -149,10 +147,10 @@ def run_exercise_evaluation(exercise_num: int,
             results[arch_name] = {**jm, **cm}
 
     if not results:
-        print('  Nessun risultato — verificare canonical.csv e modelli.')
+        print('  No result - check canonical.csv and models.')
         return {}
 
-    # ── Varianza tra training run (None se single-run) ─────────────────────
+    # ── Variance across training runs (None if single-run) ──────────────────
     arch_variance: Dict[str, Optional[Dict]] = {}
     for arch_name in ARCHITECTURES:
         arch_variance[arch_name] = load_bc_runs_variance(split_dir, arch_name)
@@ -164,7 +162,7 @@ def run_exercise_evaluation(exercise_num: int,
                 print(f'  {arch}: DTW=±{var.get("dtw_distance", float("nan")):.4f}  '
                       f'cart_DTW=±{var.get("cart_dtw", float("nan")):.4f}m')
 
-    # --- Salvataggio e plot -------------------------------------------------
+    # --- Save and plot ------------------------------------------------------
     print('\nSalvataggio CSV ...')
     save_results_csv(results, output_dir)
 
@@ -177,19 +175,19 @@ def run_exercise_evaluation(exercise_num: int,
         'CanonicalShape': canonical_shape,
         **{k: v for k, v in bc_trajs.items() if v is not None},
     }
-    # rimuovi None (canonical/canonicalShape mancanti)
+    # remove None values (canonical/canonicalShape missing)
     all_trajs = {k: v for k, v in all_trajs.items() if v is not None}
 
     plot_degradation_chain(results, output_dir, exercise_num, modality,
                            arch_variance=arch_variance)
     plot_velocity_profile(all_trajs, output_dir, baseline=baseline)
 
-    # Plot cartesiani
+    # Cartesian plot 
     plot_cartesian_trajectories(all_trajs, output_dir, suffix, active_side=active_side)
     plot_cartesian_velocity(all_trajs, output_dir, baseline=baseline)
     plot_3d_trajectories(all_trajs, output_dir, active_side=active_side)
 
-    # Heatmap riassuntiva finale + spider chart
+    # Final summary heatmap + spider chart
     plot_summary_heatmap(results, output_dir, suffix,
                          active_side=active_side, human_bounds=human_bounds,
                          arch_variance=arch_variance)
@@ -206,11 +204,9 @@ def run_exercise_evaluation(exercise_num: int,
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Valutazione singolo esercizio (degradation chain + metriche).')
+    parser = argparse.ArgumentParser(description='Single exercise evaluation (degradation chain + metrics).')
     parser.add_argument('--exercise', type=int, nargs='+', required=True, metavar='N')
-    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS,
-                        help='Split da valutare (default: 55).')
+    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS, help='Split to be evaluated (default: 55).')
     parser.add_argument('--steps', type=int, default=None)
     args = parser.parse_args()
 

@@ -1,4 +1,5 @@
 .venv_win39
+desktop.ini
 ik_strategy/_data/
 __pycache__/
 # Byte-compiled / optimized / DLL files

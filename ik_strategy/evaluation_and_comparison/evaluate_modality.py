@@ -1,21 +1,22 @@
 """
 evaluate_modality.py
 =============================================================================
-Analisi comparativa tra modalita di acquisizione: Stereo vs Mixed vs Mono.
+Comparative analysis across acquisition modalities: Stereo vs Mixed vs Mono.
 
-Risponde alla domanda: la pipeline stereo porta un beneficio misurabile
-rispetto alla mono? Le due sorgenti possono essere combinate?
+Answers the question: does the stereo pipeline yield a measurable benefit
+over mono? Can the two sources be combined effectively?
 
-Approccio: legge i results_summary.csv gia calcolati da evaluate_exercise.py
-per ogni esercizio del split richiesto. Non ricalcola metriche ne' inference.
+Approach: reads the results_summary.csv files already computed by
+evaluate_exercise.py for each exercise in the requested split.
+Does not recompute metrics or run inference.
 
-Prerequisito:
+Prerequisite:
   py -m evaluation_and_comparison.evaluate --all --n-demos 55
-  (o il n-demos desiderato)
+  (or the desired n-demos)
 
 Output (in data/evaluation_modality/):
-  results_by_exercise.csv     <- (esercizio x metodo)
-  results_aggregated.csv      <- (modalita x metodo), media sui 5 esercizi
+  results_by_exercise.csv     <- (exercise x method)
+  results_aggregated.csv      <- (modality x method), averaged over exercises
   plot_dtw_modality.png
   plot_rmse_modality.png
   plot_pearson_modality.png
@@ -55,11 +56,11 @@ METHOD_ORDER = ['Canonical', 'CanonicalShape', 'MLP', 'GRU', 'Transformer']
 # ---------------------------------------------------------------------------
 
 def _load_exercise_results(exercise_num: int, n_demos: int) -> Optional[pd.DataFrame]:
-    """Legge results_summary.csv dal split corrispondente."""
+    """Reads results_summary.csv from corresponding split."""
     path = (DATA_ROOT / 'dataset' / f'exercise_{exercise_num:03d}'
             / split_name(n_demos) / 'evaluation' / 'results_summary.csv')
     if not path.exists():
-        print(f'  [!] Mancante: exercise_{exercise_num:03d}/{split_name(n_demos)}/evaluation/results_summary.csv')
+        print(f'  [!] Missing: exercise_{exercise_num:03d}/{split_name(n_demos)}/evaluation/results_summary.csv')
         return None
     df = pd.read_csv(path)
     df['exercise_num']  = exercise_num
@@ -74,10 +75,8 @@ def _load_exercise_results(exercise_num: int, n_demos: int) -> Optional[pd.DataF
 # Plot helpers
 # ---------------------------------------------------------------------------
 
-def _grouped_bar_modality(agg: pd.DataFrame, metric: str,
-                           ylabel: str, title: str,
-                           output_path: Path) -> None:
-    """Grouped bar: asse X = architetture, colori = modalita."""
+def _grouped_bar_modality(agg: pd.DataFrame, metric: str, ylabel: str, title: str, output_path: Path) -> None:
+    """Grouped bar: X axis = architectures, colors = modality."""
     methods  = [m for m in ['Canonical', 'CanonicalShape'] + list(ARCHITECTURES.keys())
                 if m in agg['method'].values]
     mods     = list(MODALITY_GROUPS.keys())
@@ -112,19 +111,8 @@ def _grouped_bar_modality(agg: pd.DataFrame, metric: str,
     plt.close(fig)
     print(f'  Saved -> {output_path.name}')
 
-
-def _rmse_heatmap(agg: pd.DataFrame, arch: str, output_path: Path) -> None:
-    """Heatmap RMSE joint per (modalita x joint) per una singola architettura."""
-    # Per questa heatmap serve results_per_joint.csv, non results_summary.
-    # Se non disponibile, skip silenzioso.
-    print(f'  [skip] heatmap RMSE per joint non disponibile da results_summary '
-          f'(serve results_per_joint.csv) — {arch}')
-
-
-def _line_per_exercise(df: pd.DataFrame, metric: str,
-                        ylabel: str, title: str,
-                        output_path: Path) -> None:
-    """Line plot: asse X = tipo esercizio (1-5), linee per (metodo x modalita)."""
+def _line_per_exercise(df: pd.DataFrame, metric: str, ylabel: str, title: str, output_path: Path) -> None:
+    """Line plot: X axis = exercise type (1-5), lines for (method x modality)."""
     ex_types = sorted(df['exercise_type'].unique())
     methods  = [m for m in ['Canonical', 'CanonicalShape'] + list(ARCHITECTURES.keys())
                 if m in df['method'].values]
@@ -164,17 +152,17 @@ def _line_per_exercise(df: pd.DataFrame, metric: str,
 
 def run_modality_analysis(n_demos: int = 55) -> None:
     """
-    Legge i results_summary.csv gia calcolati per ogni esercizio
-    del split n_demos, aggrega per modalita e produce i plot.
+    Reads the results_summary.csv already computed for each exercise
+    of the split n_demos, aggregates per modality and produces plots.
     """
     out_dir = DATA_ROOT / 'evaluation_modality'
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'\n{"="*65}')
-    print(f'  ANALISI MODALITY  --  split {split_name(n_demos)}')
+    print(f'  ANALISIS MODALITY  --  split {split_name(n_demos)}')
     print(f'{"="*65}')
 
-    # Carica tutti i risultati disponibili
+    # Loads all the available results
     all_dfs = []
     for mod, ex_nums in MODALITY_GROUPS.items():
         print(f'\n  {mod}:')
@@ -185,25 +173,25 @@ def run_modality_analysis(n_demos: int = 55) -> None:
                 print(f'    exercise_{ex_num:03d}: {len(df)} metodi')
 
     if not all_dfs:
-        print('\nNessun risultato trovato. Eseguire prima:')
+        print('\nNo result found. Run:')
         print(f'  py -m evaluation_and_comparison.evaluate --all --n-demos {n_demos}')
         return
 
     by_ex = pd.concat(all_dfs, ignore_index=True)
 
-    # Colonna derivata: RMSE del braccio attivo (sempre definita,
-    # compatibile con CSV generati prima dell'aggiornamento di _io.py)
+    # Derived column: RMSE of the active arm (always defined,
+    # compatible with CSVs generated before the _io.py update)
     if 'cart_rmse_wrist' not in by_ex.columns:
         by_ex['cart_rmse_wrist'] = (by_ex.get('cart_rmse_l_wrist', float('nan'))
                                          .fillna(by_ex.get('cart_rmse_r_wrist',
                                                             float('nan'))))
 
-    # Salva CSV raw
+    # Saves CSV raw
     p = out_dir / 'results_by_exercise.csv'
     by_ex.to_csv(p, index=False)
     print(f'\n  Saved -> {p.name}')
 
-    # Aggrega per (modalita x metodo) — media sui 5 esercizi
+    # Aggregates per (modality x method) - avg on the 5 exercises
     metric_cols = [c for c in by_ex.columns
                    if c not in ('method', 'modality', 'exercise_num', 'exercise_type')]
     agg = (by_ex.groupby(['modality', 'method'])[metric_cols]
@@ -218,7 +206,7 @@ def run_modality_analysis(n_demos: int = 55) -> None:
     print(f'  Saved -> {p.name}')
 
     # Plot
-    print('\n  Generazione plot ...')
+    print('\n  Plot generation ...')
     PLOT_CANDIDATES = [
         ('cart_dtw',          'DTW (m)  (lower=better)',      'plot_dtw_modality.png'),
         ('cart_rmse_l_wrist', 'RMSE Lw (m)  (lower=better)', 'plot_rmse_lw_modality.png'),
@@ -249,9 +237,9 @@ def run_modality_analysis(n_demos: int = 55) -> None:
             title=f'Per-Exercise -- {ylabel}  [all modalities x methods]',
             output_path=out_dir / fname)
 
-    # Riepilogo a terminale
+    # Sum-up 
     print(f'\n{"="*72}')
-    print(f'  RIEPILOGO -- split {split_name(n_demos)}')
+    print(f'  SUMMARY -- split {split_name(n_demos)}')
     print(f'{"="*72}')
     print(f'  {"Modality":<8} {"Method":<16}  {"DTW(m/f)":>9}  '
           f'{"RMSE Lw":>8}  {"Pearson":>8}')
@@ -276,10 +264,8 @@ def run_modality_analysis(n_demos: int = 55) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Analisi comparativa Stereo vs Mixed vs Mono.')
-    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS,
-                        help='Split da usare (default: 55).')
+    parser = argparse.ArgumentParser(description='Comparative analisis Stereo vs Mixed vs Mono.')
+    parser.add_argument('--n-demos', type=int, default=55, choices=N_DEMOS_SPLITS, help='Split to be used (default: 55).')
     args = parser.parse_args()
     run_modality_analysis(args.n_demos)
     print('\nDone.')

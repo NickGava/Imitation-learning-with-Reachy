@@ -1,15 +1,16 @@
 '''
 _metrics.py
 =============================================================================
-Calcolo delle metriche di valutazione in joint space e spazio cartesiano.
+Computation of evaluation metrics in joint space and Cartesian space.
 
-La FK è importata da data_acquisition.run_ik — fonte unica nel progetto.
+FK is imported from data_acquisition.run_ik - single source of truth
+across the project.
 
-Funzioni pubbliche:
-    compute_metrics(generated, reference)           → dict metriche joint-space
-    compute_cartesian_metrics(generated, reference) → dict metriche cartesiane
-    aggregate_metrics(metrics_list)                 → media su più sequenze
-    print_summary(results, title)                   → tabella a terminale
+Public functions:
+    compute_metrics(generated, reference)           -> joint-space metrics dict
+    compute_cartesian_metrics(generated, reference) -> Cartesian metrics dict
+    aggregate_metrics(metrics_list)                 -> average over multiple sequences
+    print_summary(results, title)                   -> formatted terminal table
 '''
 
 from typing import Dict, List
@@ -23,27 +24,27 @@ from evaluation_and_comparison._config import ACTIVE_IDX, N_JOINTS
 
 
 def _safe_pearsonr(a: np.ndarray, b: np.ndarray) -> float:
-    '''Pearson correlation con controllo preventivo su array costanti.'''
+    '''Pearson correlation with preventive check on constant arrays.'''
     if np.std(a) < 1e-10 or np.std(b) < 1e-10:
         return 0.0
     return float(pearsonr(a, b)[0])
 
 
 # ============================================================================
-# Helper FK: (T, 16) gradi → traiettorie cartesiane per i 4 endpoint
+# Helper FK: (T, 16) degrees -> Cartesian positions di polso e gomito
 # ============================================================================
 
 def _to_cartesian(q_deg: np.ndarray):
     '''
-    Applica la FK a ogni frame di una traiettoria joint-space.
+    Applies FK to each frame of a joint-space trajectory.
 
-    Parametri
+    Parametres
     ----------
-    q_deg : (T, 16) array in gradi, ordine = JOINT_COLS
+    q_deg : (T, 16) array in degrees, order = JOINT_COLS
 
-    Ritorna
+    Returns
     -------
-    r_wrist, r_elbow, l_wrist, l_elbow : ciascuno (T, 3) in metri
+    r_wrist, r_elbow, l_wrist, l_elbow : each (T, 3) in meters
     '''
     T = len(q_deg)
     r_wrist = np.zeros((T, 3))
@@ -51,8 +52,8 @@ def _to_cartesian(q_deg: np.ndarray):
     l_wrist = np.zeros((T, 3))
     l_elbow = np.zeros((T, 3))
     for t in range(T):
-        # Indici 0-3 = right arm (shoulder_pitch/roll, arm_yaw, elbow_pitch)
-        # Indici 8-11 = left arm — pad 3 zeri per forearm_yaw/wrist_pitch/wrist_roll
+        # Indices 0-3 = right arm (shoulder_pitch/roll, arm_yaw, elbow_pitch)
+        # Indices 8-11 = left arm - pad 3 zeros for forearm_yaw/wrist_pitch/wrist_roll
         q_r = np.deg2rad(np.pad(q_deg[t, :4],   (0, 3)))
         q_l = np.deg2rad(np.pad(q_deg[t, 8:12], (0, 3)))
         r_elbow[t], r_wrist[t] = fk(q_r, 'right')
@@ -61,35 +62,33 @@ def _to_cartesian(q_deg: np.ndarray):
 
 
 # ============================================================================
-# Metriche joint-space
+# Metrics joint-space
 # ============================================================================
 
-def compute_metrics(generated: np.ndarray,
-                    reference: np.ndarray,
-                    label: str = '') -> Dict:
+def compute_metrics(generated: np.ndarray, reference: np.ndarray, label: str = '') -> Dict:
     '''
-    Calcola le metriche joint-space tra la traiettoria generata e la reference.
+    Compute joint-space metrics between the generated and reference trajectories.
 
-    Le medie scalari sono calcolate sui soli ACTIVE_IDX (8 joint mobili).
-    Le versioni per-joint coprono tutti i 16 joint.
+    Scalar averages are computed over ACTIVE_IDX only (8 mobile joints).
+    Per-joint versions cover all 16 joints.
 
-    Parametri
+    Parameters
     ----------
-    generated : (T, 16) array in gradi
-    reference : (T_ref, 16) array in gradi
-    label     : stringa per la stampa a terminale
+    generated : (T, 16) array in degrees
+    reference : (T_ref, 16) array in degrees
+    label     : string for terminal output
 
-    Ritorna
+    Returns
     -------
-    dict con: dtw_distance, rmse_mean, rmse_per_joint,
-              peak_error_mean, peak_error_per_joint,
-              pearson_mean, pearson_per_joint, smoothness
+    dict with: dtw_distance, rmse_mean, rmse_per_joint,
+               peak_error_mean, peak_error_per_joint,
+               pearson_mean, pearson_per_joint, smoothness
     '''
     path, dtw_dist = dtw_path(generated, reference)
     gen_al = generated[[p[0] for p in path]]
     ref_al = reference[[p[1] for p in path]]
 
-    # RMSE per joint (post-allineamento DTW)
+    # RMSE per joint (post-allignment DTW)
     rmse_pj   = np.sqrt(np.mean((gen_al - ref_al) ** 2, axis=0))
     rmse_mean = float(np.mean(rmse_pj[ACTIVE_IDX]))
 
@@ -130,19 +129,16 @@ def compute_metrics(generated: np.ndarray,
 
 
 # ============================================================================
-# Metriche cartesiane
+# Cartesian metrics
 # ============================================================================
 
-def compute_cartesian_metrics(generated: np.ndarray,
-                               reference: np.ndarray,
-                               active_side: str = 'both',
-                               label: str = '') -> Dict:
+def compute_cartesian_metrics(generated: np.ndarray, reference: np.ndarray, active_side: str = 'both', label: str = '') -> Dict:
     '''
-    Calcola le metriche nello spazio cartesiano solo per il braccio attivo.
+    Compute cartesian metrics only for the active arm.
 
     active_side : 'left' | 'right' | 'both'
-        Determina quale braccio considerare. Le metriche del braccio inattivo
-        non vengono calcolate (NaN). Il DTW usa solo il braccio attivo (6D).
+        Determines which arm to consider. Metrics for the inactive arm
+        are not computed (NaN). The DTW uses only the active arm (6D).
     '''
     nan = float('nan')
 
@@ -153,7 +149,7 @@ def compute_cartesian_metrics(generated: np.ndarray,
     r_wrist_g, r_elbow_g, l_wrist_g, l_elbow_g = _to_cartesian(generated)
     r_wrist_r, r_elbow_r, l_wrist_r, l_elbow_r = _to_cartesian(reference)
 
-    # DTW solo sul braccio attivo (6D: wrist + elbow)
+    # DTW only for the active arm (6D: wrist + elbow)
     if active_side == 'left':
         traj_g = np.hstack([l_wrist_g, l_elbow_g])
         traj_r = np.hstack([l_wrist_r, l_elbow_r])
@@ -168,7 +164,7 @@ def compute_cartesian_metrics(generated: np.ndarray,
     idx_g = [p[0] for p in path]
     idx_r = [p[1] for p in path]
 
-    # Metriche braccio destro
+    # Metrics right arm
     if active_side in ('right', 'both'):
         rw_g, re_g = r_wrist_g[idx_g], r_elbow_g[idx_g]
         rw_r, re_r = r_wrist_r[idx_r], r_elbow_r[idx_r]
@@ -183,7 +179,7 @@ def compute_cartesian_metrics(generated: np.ndarray,
         pearson_rw   = np.full(3, nan)
         smooth_r     = None
 
-    # Metriche braccio sinistro
+    # Metrics left arm
     if active_side in ('left', 'both'):
         lw_g, le_g = l_wrist_g[idx_g], l_elbow_g[idx_g]
         lw_r, le_r = l_wrist_r[idx_r], l_elbow_r[idx_r]
@@ -198,7 +194,7 @@ def compute_cartesian_metrics(generated: np.ndarray,
         pearson_lw   = np.full(3, nan)
         smooth_l     = None
 
-    # Pearson mean solo sul braccio attivo
+    # Pearson mean only for the active arm
     if active_side == 'left':
         pearson_mean = float(np.nanmean(pearson_lw))
     elif active_side == 'right':
@@ -206,7 +202,7 @@ def compute_cartesian_metrics(generated: np.ndarray,
     else:
         pearson_mean = float(np.nanmean(np.concatenate([pearson_rw, pearson_lw])))
 
-    # Smoothness solo sul braccio attivo
+    # Smoothness only for the active arm
     wrist_active = (smooth_l if active_side == 'left'
                     else smooth_r if active_side == 'right'
                     else np.hstack([r_wrist_g, l_wrist_g]))
@@ -231,7 +227,7 @@ def compute_cartesian_metrics(generated: np.ndarray,
         'cart_rmse_l_elbow': rmse_l_elbow,
         'cart_peak_r_wrist': peak_r,
         'cart_peak_l_wrist': peak_l,
-        'cart_pearson_rw'  : pearson_rw,   # (3,) per coordinata X, Y, Z
+        'cart_pearson_rw'  : pearson_rw,   # (3,) for coordinate X, Y, Z
         'cart_pearson_lw'  : pearson_lw,
         'cart_pearson_mean': pearson_mean,
         'cart_smoothness'  : cart_smoothness,
@@ -239,13 +235,13 @@ def compute_cartesian_metrics(generated: np.ndarray,
 
 
 # ============================================================================
-# Aggregazione (media su più sequenze)
+# Aggregation (average over multiple sequences)
 # ============================================================================
 
 def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
     '''
-    Media di una lista di dict di metriche (es. più demo umane o più esercizi).
-    Chiavi scalari: nanmean. Chiavi vettoriali: nanmean per elemento.
+    Average of a list of metric dictionaries (e.g., multiple human demos or exercises).
+    Scalar keys: nanmean. Vectorial keys: nanmean per element.
     '''
     scalar_keys = [
         'dtw_distance', 'rmse_mean', 'peak_error_mean',
@@ -260,7 +256,7 @@ def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
         'rmse_per_joint', 'peak_error_per_joint', 'pearson_per_joint',
         'cart_pearson_rw', 'cart_pearson_lw',
     ]
-    # Prendi solo le chiavi presenti in tutti i dict della lista
+    # Take only the keys present in all dictionaries of the list
     present_scalars = [k for k in scalar_keys
                        if any(k in m for m in metrics_list)]
     present_arrs    = [k for k in arr_keys
@@ -276,17 +272,17 @@ def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
 
 
 # ============================================================================
-# Stampa riepilogo a terminale
+# Print summary to terminal
 # ============================================================================
 
 def print_summary(results: Dict, title: str) -> None:
-    '''Stampa una tabella riassuntiva con metriche joint-space e cartesiane.'''
+    '''Print a summary table with joint-space and cartesian metrics.'''
     w = 100
     print(f'\n{"="*w}\n  {title}\n{"="*w}')
 
     # Joint space
     print(f'\n  [Joint space]\n  {"─"*80}')
-    print(f'  {"Metodo":<20}  {"DTW(°)":>9}  {"RMSE(°)":>8}  '
+    print(f'  {"Method":<20}  {"DTW(°)":>9}  {"RMSE(°)":>8}  '
           f'{"Peak(°)":>8}  {"Pearson":>8}  {"Smooth":>10}')
     print(f'  {"─"*80}')
     for m, r in results.items():
@@ -298,7 +294,7 @@ def print_summary(results: Dict, title: str) -> None:
 
     if any('cart_dtw' in r for r in results.values()):
         print(f'\n  [Cartesian space]\n  {"─"*80}')
-        print(f'  {"Metodo":<20}  {"DTW(m)":>9}  {"Rw(m)":>8}  '
+        print(f'  {"Method":<20}  {"DTW(m)":>9}  {"Rw(m)":>8}  '
               f'{"Lw(m)":>8}  {"Pearson":>8}  {"Smooth":>10}')
         print(f'  {"─"*80}')
         for m, r in results.items():
