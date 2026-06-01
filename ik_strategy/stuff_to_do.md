@@ -40,7 +40,7 @@ py -m evaluation_and_comparison.evaluate_modality --n-demos 55    ✓
 
 mettere ordine nella repo       ✓
 
-implementare la sicurezza - check
+implementare la sicurezza       ✓
 
 ## PER PROVARE ESERCIZIO --------------------------------------------------------------------------------------------------------------------
 # 1. Canonical — tre split
