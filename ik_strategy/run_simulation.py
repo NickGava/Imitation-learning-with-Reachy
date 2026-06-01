@@ -8,6 +8,7 @@ Modes:
   video       - reproduces joint_ik.csv from landmarks (asks for --subject, --exercise, --video)
   baseline    - reproduces baseline.csv (asks for --exercise)
   canonical   - reproduces n_XX/canonical.csv (asks for --exercise, --n-demos)
+  canonical_shape  - reproduces n_XX/canonicalShape.csv (asks for --exercise, --n-demos)
   mlp         - reproduces n_XX/MLP/bc_trajectory_mean.csv (asks for --exercise, --n-demos)
   gru         - reproduces n_XX/GRU/bc_trajectory_mean.csv (asks for --exercise, --n-demos)
   transformer - reproduces n_XX/Transformer/bc_trajectory_mean.csv (asks for --exercise, --n-demos)
@@ -52,10 +53,11 @@ from utilities.split_utils import split_name, N_DEMOS_SPLITS
 SIMULATOR_HOST  = 'localhost'
 MIN_FRAME_DELAY = 0.033    # ~30 Hz
 GOTO_DURATION   = 2.0
+COLLISION_CHECK_EVERY = 5  # frames
 
-VALID_MODES = ['video', 'baseline', 'canonical', 'mlp', 'gru', 'transformer']
+VALID_MODES = ['video', 'baseline', 'canonical', 'canonical_shape', 'mlp', 'gru', 'transformer']
 BC_MODES    = {'mlp', 'gru', 'transformer'}
-CSV_MODES   = {'video', 'baseline', 'canonical'}
+CSV_MODES   = {'video', 'baseline', 'canonical', 'canonical_shape'}
 
 ALL_ARM_JOINTS = [
     'r_shoulder_pitch', 'r_shoulder_roll', 'r_arm_yaw', 'r_elbow_pitch',
@@ -115,15 +117,28 @@ def _goto_pose(reachyC: ReachyController, pose: dict, duration: float) -> None:
             f.result()
     time.sleep(0.2)
 
-
 def _send_q(reachyC: ReachyController, q: np.ndarray) -> None:
-    '''Sends goal_position for every joint'''
+    '''Sends goal_position for every joint (no collision check).'''
     for i, col in enumerate(JOINT_COLS):
         arm   = reachyC.armRight if col.startswith('r_') else reachyC.armLeft
         joint = arm._joints.get(col)
         if joint is not None:
             joint.goal_position = float(q[i])
 
+def _safety_check(reachyC: ReachyController, q: np.ndarray) -> bool:
+    '''
+    Runs collision and limit checks via ReachyController without moving.
+    Returns False if the pose is unsafe.
+    '''
+    pose_r, pose_l = _build_arm_dicts(reachyC, {col: float(q[i]) for i, col in enumerate(JOINT_COLS)})
+    
+    if reachyC.armRight._checkCollision(pose_r):
+        print('[SAFETY] Collision detected on right arm — stopping.')
+        return False
+    if reachyC.armLeft._checkCollision(pose_l):
+        print('[SAFETY] Collision detected on left arm — stopping.')
+        return False
+    return True
 
 # ---------------------------------------------------------------------------
 # CSV loading
@@ -181,6 +196,10 @@ def _resolve_paths(mode: str, args) -> tuple[Path, dict]:
         split_dir  = exercise_dir / split_name(args.n_demos)
         traj_path  = split_dir / 'canonical.csv'
         start_pose = _load_start_pose(traj_path)
+    elif mode == 'canonical_shape':
+        split_dir  = exercise_dir / split_name(args.n_demos)
+        traj_path  = split_dir / 'canonicalShape.csv'
+        start_pose = _load_start_pose(traj_path)
 
     else:  # mlp / gru / transformer
         arch       = mode.upper()
@@ -196,12 +215,7 @@ def _resolve_paths(mode: str, args) -> tuple[Path, dict]:
 # ---------------------------------------------------------------------------
 # Playback
 # ---------------------------------------------------------------------------
-
 def _play_trajectory(reachyC: ReachyController, q_traj: np.ndarray, start_pose: dict, runs: int = 1) -> None:
-    '''
-    Runs the trajectory on the robot frame-by-frame at ~30 Hz.
-    Before every run: goto start_pose.
-    '''
     n = len(q_traj)
     for run in range(1, runs + 1):
         if runs > 1:
@@ -215,14 +229,19 @@ def _play_trajectory(reachyC: ReachyController, q_traj: np.ndarray, start_pose: 
         t_start = time.perf_counter()
         for step in range(n):
             t_target = t_start + step * MIN_FRAME_DELAY
-            _send_q(reachyC, q_traj[step])
+
+            if step % COLLISION_CHECK_EVERY == 0:
+                if not _safety_check(reachyC, q_traj[step]):
+                    break  
+
+            _send_q(reachyC, q_traj[step])   
+
             remaining = t_target + MIN_FRAME_DELAY - time.perf_counter()
             if remaining > 0:
                 time.sleep(remaining)
 
         elapsed = time.perf_counter() - t_start
         print(f'Complete. ({elapsed:.1f}s)')
-
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +295,7 @@ def main():
     print(f'\nMode     : {mode}')
     if mode not in ('video',):
         print(f'Exercise : {args.exercise}')
-    if mode in BC_MODES or mode == 'canonical':
+    if mode in BC_MODES or mode in ('canonical', 'canonical_shape'):
         print(f'Split    : {split_name(args.n_demos)}')
     print()
 

@@ -38,7 +38,7 @@ py -m evaluation_and_comparison.evaluate_demos --all            ✓
 
 py -m evaluation_and_comparison.evaluate_modality --n-demos 55    ✓  
 
-mettere ordine nella repo (manca solo bc_approach/)
+mettere ordine nella repo       ✓
 
 implementare la sicurezza - check
 
