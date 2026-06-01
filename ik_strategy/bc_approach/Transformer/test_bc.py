@@ -5,7 +5,7 @@ Runs the BC Transformer autoregressive loop for a given exercise and plots
 the FK trajectories for both arms.
 
 The Transformer maintains a rolling history of the last SEQ_LEN timesteps,
-each containing [q, dq] (16 features). At each step the window is normalized,
+each containing [q, dq] (32 features). At each step the window is normalized,
 fed to the Transformer with a causal mask, and the predicted delta is applied.
 
 By default runs offline only (no simulator).
@@ -211,10 +211,7 @@ def load_ensemble(model_dir: Path):
 # ---------------------------------------------------------------------------
 # Autoregressive loop (ensemble)
 # ---------------------------------------------------------------------------
-def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
-                reachy=None, closed_loop: bool = False,
-                stop_threshold: float = STOP_THRESHOLD_M,
-                stop_window:    int   = STOP_WINDOW) -> np.ndarray:
+def run_bc_loop(ensemble, n_steps: int, start_pose: dict, reachy=None, closed_loop: bool = False, stop_threshold: float = STOP_THRESHOLD_M, stop_window:int = STOP_WINDOW) -> np.ndarray:
     """
     Runs the autoregressive loop using an ensemble of Transformer models.
 
@@ -224,9 +221,9 @@ def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
 
     Heuristic stopping criterion (disabled if stop_threshold is None):
       Two-phase state machine:
-        1. DEPARTED  — waits until at least one wrist moves more than
+        1. DEPARTED  - waits until at least one wrist moves more than
                        stop_threshold metres away from its start FK position.
-        2. RETURNED  — once departed, counts consecutive frames where both
+        2. RETURNED  - once departed, counts consecutive frames where both
                        wrists are within stop_threshold of the start position.
                        Stops after stop_window such frames.
       In closed-loop mode the check is performed on q_actual (encoder reading)
@@ -356,7 +353,7 @@ def plot_joints_trajectory(q_traj: np.ndarray, exercise_num: int, output_path: P
         axes = np.array([axes])
 
     fig.suptitle(
-        f'Joint angles (Transformer) — exercise_{exercise_num:03d}\n'
+        f'Joint angles (Transformer) - exercise_{exercise_num:03d}\n'
         f'(Y scale = robot joint limits)',
         fontsize=13, fontweight='bold', y=1.01,
     )
@@ -460,7 +457,7 @@ def plot_fk_trajectories(all_fk, exercise_num, output_path: Path):
 
     fig, axs = plt.subplots(3, 2, figsize=(13, 10))
     fig.suptitle(
-        f'FK trajectories — Exercise {exercise_num:03d}  [Transformer]\n'
+        f'FK trajectories - Exercise {exercise_num:03d}  [Transformer]\n'
         f'(Reachy torso frame: X=forward, Y=left, Z=up)', fontsize=13)
     axs[0, 0].set_title('Right arm', fontsize=11)
     axs[0, 1].set_title('Left arm',  fontsize=11)
@@ -503,21 +500,13 @@ def main():
     parser.add_argument('--steps',       type=int, default=None)
     parser.add_argument('--sim',         action='store_true',
                         help='Send trajectory to Unity simulator.')
-    parser.add_argument('--closed-loop', action='store_true',
-                        help='Read present_position from robot after each step (requires --sim).')
+    parser.add_argument('--closed-loop', action='store_true', help='Read present_position from robot after each step (requires --sim).')
     parser.add_argument('--host',        type=str, default=SIMULATOR_HOST)
-    parser.add_argument('--no-stop',     action='store_true',
-                        help='Disable heuristic stopping criterion (run for full n_steps).')
-    parser.add_argument('--stop-threshold', type=float, default=STOP_THRESHOLD_M,
-                        metavar='M',
-                        help=f'Wrist distance threshold in metres (default: {STOP_THRESHOLD_M}).')
-    parser.add_argument('--stop-window', type=int, default=STOP_WINDOW,
-                        metavar='N',
-                        help=f'Consecutive frames below threshold before stopping '
-                             f'(default: {STOP_WINDOW}).')
+    parser.add_argument('--no-stop',     action='store_true', help='Disable heuristic stopping criterion (run for full n_steps).')
+    parser.add_argument('--stop-threshold', type=float, default=STOP_THRESHOLD_M, metavar='M', help=f'Wrist distance threshold in metres (default: {STOP_THRESHOLD_M}).')
+    parser.add_argument('--stop-window', type=int, default=STOP_WINDOW, metavar='N', help=f'Consecutive frames below threshold before stopping (default: {STOP_WINDOW}).')
     parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
-    parser.add_argument('--run', type=int, default=None,
-                        help='Training run index. If set, loads from Transformer/run_N/.')
+    parser.add_argument('--run', type=int, default=None, help='Training run index. If set, loads from Transformer/run_N/.')
     args = parser.parse_args()
 
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}'
@@ -529,19 +518,6 @@ def main():
 
     ensemble   = load_ensemble(model_dir)
     start_pose = _load_start_pose(split_dir)
-
-    # if args.steps is not None:
-    #     n_steps = args.steps
-    #     print(f'Steps: {n_steps}  (from --steps)')
-    # elif (exercise_dir / 'canonical.csv').exists():
-    #     n_steps = len(pd.read_csv(exercise_dir / 'canonical.csv'))
-    #     print(f'Steps: {n_steps}  (from canonical.csv)')
-    # elif (exercise_dir / 'baseline.csv').exists():
-    #     n_steps = len(pd.read_csv(exercise_dir / 'baseline.csv'))
-    #     print(f'Steps: {n_steps}  (from baseline.csv)')
-    # else:
-    #     n_steps = 300
-    #     print(f'Steps: {n_steps}  (default)')
     n_steps = 1000
 
     reachy      = None

@@ -19,26 +19,26 @@ ricarica il dataset su kaggle       ✓
 
 !python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 10 and save       ✓
 !python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 25 and save       ✓
-!python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 55 and save       1/5
+!python run_bc_approach.py --exercise a --start 1 --end 5 --training-runs 5 --n-demos 55 and save       ✓
 
 !python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 10 and save     ✓
 !python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 25 and save     ✓
-!python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 55 and save
+!python run_bc_approach.py --exercise a --start 11 --end 15 --training-runs 5 --n-demos 55 and save     ✓
 
 !python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 10 and save     ✓
 !python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 25 and save     ✓
-!python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 55 and save
+!python run_bc_approach.py --exercise a --start 21 --end 25 --training-runs 5 --n-demos 55 and save     ✓
 
 
-py -m evaluation_and_comparison.evaluate --all --n-demos 10     
-py -m evaluation_and_comparison.evaluate --all --n-demos 25     
-py -m evaluation_and_comparison.evaluate --all --n-demos 55     
+py -m evaluation_and_comparison.evaluate --all --n-demos 10     ✓
+py -m evaluation_and_comparison.evaluate --all --n-demos 25     ✓
+py -m evaluation_and_comparison.evaluate --all --n-demos 55     ✓
 
-py -m evaluation_and_comparison.evaluate_demos --all            
+py -m evaluation_and_comparison.evaluate_demos --all            ✓
 
-py -m evaluation_and_comparison.evaluate_modality --n-demos 55      
+py -m evaluation_and_comparison.evaluate_modality --n-demos 55    ✓  
 
-mettere ordine nella repo 
+mettere ordine nella repo (manca solo bc_approach/)
 
 implementare la sicurezza - check
 

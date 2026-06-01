@@ -83,6 +83,16 @@ def build_sequences(df, seq_len):
 
 
 def _train_fold(df_trn, df_val, device, fold_idx, output_dir):
+    '''
+    Train a single GRU fold on the given train/val split.
+
+    Builds sequences, fits a StandardScaler on training data, trains the
+    GRU with early stopping (patience=PATIENCE), and saves the best
+    checkpoint and scaler to output_dir.
+
+    Returns (best_val_loss, train_losses, val_losses).
+    Returns (inf, [], []) if the split yields no sequences.
+    '''
     X_trn, y_trn = build_sequences(df_trn, SEQ_LEN)
     X_val, y_val = build_sequences(df_val, SEQ_LEN)
     if len(X_trn) == 0 or len(X_val) == 0:
@@ -154,7 +164,7 @@ def _save_loss_curve(all_train, all_val, path):
         ax.plot(tl, color=colors[i], lw=1.2, alpha=0.7, label=f'fold {i} train')
         ax.plot(vl, color=colors[i], lw=1.2, alpha=0.7, linestyle='--', label=f'fold {i} val')
     ax.set_xlabel('Epoch'); ax.set_ylabel('MSE loss')
-    ax.set_title('GRU — K-fold training curves')
+    ax.set_title('GRU - K-fold training curves')
     ax.legend(fontsize=7, ncol=2); ax.grid(True, alpha=0.3)
     fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
     print(f'Loss curve saved → {path}')
@@ -164,9 +174,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train BC GRU (k-fold) for one exercise.')
     parser.add_argument('exercise', type=int, help='Exercise number (e.g. 1)')
     parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
-    parser.add_argument('--run', type=int, default=None,
-                        help='Training run index (1-based). Saves to GRU/run_N/ with a '
-                             'different random seed for reproducible independence.')
+    parser.add_argument('--run', type=int, default=None, help='Training run index (1-based). Saves to GRU/run_N/ with a different random seed for reproducible independence.')
     args = parser.parse_args()
 
     split_dir    = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}' / split_name(args.n_demos)

@@ -1,17 +1,17 @@
 '''
 aggregate_runs.py
 =============================================================================
-Aggrega i risultati di più training run per ogni architettura BC.
+Aggregates results from multiple training runs for each BC architecture.
 
-Per ogni architettura (MLP, GRU, Transformer):
-  1. Trova tutti i run_*/bc_trajectory.csv nella cartella arch/
-  2. Ricampiona le traiettorie alla lunghezza mediana
-  3. Calcola la traiettoria media  → arch/bc_trajectory_mean.csv
-  4. Calcola le metriche per ogni run vs baseline → arch/runs_metrics.csv
+For each architecture (MLP, GRU, Transformer):
+  1. Finds all run_*/bc_trajectory.csv files in the arch/ folder
+  2. Resamples trajectories to the median length
+  3. Computes the mean trajectory  -> arch/bc_trajectory_mean.csv
+  4. Computes per-run metrics vs baseline -> arch/runs_metrics.csv
 
-La traiettoria media viene poi usata da evaluate_exercise.py
-(load_bc_trajectory preferisce bc_trajectory_mean.csv se disponibile).
-La std delle metriche viene mostrata nella heatmap e nel degradation chain.
+The mean trajectory is then used by evaluate_exercise.py
+(load_bc_trajectory prefers bc_trajectory_mean.csv if available).
+The metric std is shown in the heatmap and degradation chain plot.
 
 Usage:
   py -m bc_approach.aggregate_runs --exercise 1
@@ -30,7 +30,7 @@ from utilities.split_utils import split_name, N_DEMOS_SPLITS
 from evaluation_and_comparison._config import ARCHITECTURES
 from evaluation_and_comparison._metrics import compute_metrics, compute_cartesian_metrics
 
-# Metriche scalari da salvare in runs_metrics.csv
+# Scalar metrics to save in runs_metrics.csv
 _SCALAR_JOINT_KEYS = [
     'dtw_distance', 'rmse_mean', 'peak_error_mean', 'pearson_mean', 'smoothness',
 ]
@@ -44,7 +44,7 @@ _SCALAR_CART_KEYS = [
 
 
 def _resample(arr: np.ndarray, target_len: int) -> np.ndarray:
-    '''Ricampiona (T, D) a (target_len, D) con interpolazione lineare.'''
+    '''Resample (T, D) to (target_len, D) using linear interpolation.'''
     if len(arr) == target_len:
         return arr
     t_old = np.linspace(0, 1, len(arr))
@@ -52,27 +52,25 @@ def _resample(arr: np.ndarray, target_len: int) -> np.ndarray:
     return interp1d(t_old, arr, axis=0, kind='linear')(t_new)
 
 
-def aggregate_arch(arch_dir: Path, baseline: np.ndarray,
-                   active_side: str) -> bool:
+def aggregate_arch(arch_dir: Path, baseline: np.ndarray, active_side: str) -> bool:
     '''
-    Aggrega tutti i run_*/bc_trajectory.csv trovati in arch_dir.
+    Aggregates all run_*/bc_trajectory.csv found in arch_dir.
 
-    Salva:
-      arch_dir/bc_trajectory_mean.csv  — media frame-per-frame (ricampionata)
-      arch_dir/runs_metrics.csv        — metriche per-run vs baseline
+    Saves:
+      arch_dir/bc_trajectory_mean.csv  - mean frame-per-frame (resampled)
+      arch_dir/runs_metrics.csv        - metrics per-run vs baseline
     '''
     run_dirs   = sorted(arch_dir.glob('run_*/'))
-    traj_paths = [d / 'bc_trajectory.csv'
-                  for d in run_dirs if (d / 'bc_trajectory.csv').exists()]
+    traj_paths = [d / 'bc_trajectory.csv' for d in run_dirs if (d / 'bc_trajectory.csv').exists()]
 
     if len(traj_paths) < 2:
-        print(f'  [{arch_dir.name}] Meno di 2 run trovati — skip aggregation.')
+        print(f'  [{arch_dir.name}] Less than 2 runs found - skip aggregation.')
         return False
 
     n_runs = len(traj_paths)
     print(f'\n  [{arch_dir.name}] Aggregating {n_runs} run(s) ...')
 
-    # Carica tutte le traiettorie
+    # Load trajectories
     trajs = []
     for p in traj_paths:
         df  = pd.read_csv(p)
@@ -81,17 +79,17 @@ def aggregate_arch(arch_dir: Path, baseline: np.ndarray,
         trajs.append(arr)
         print(f'    {p.parent.name}: {len(arr)} frame')
 
-    # Ricampiona alla lunghezza mediana
+    # Resample to median length
     median_len = int(np.median([len(t) for t in trajs]))
     resampled  = [_resample(t, median_len) for t in trajs]
 
-    # ── Traiettoria media ──────────────────────────────────────────────────
+    # ── Mean trajectory ──────────────────────────────────────────────────
     mean_traj = np.mean(resampled, axis=0)   # (median_len, 16)
     mean_path = arch_dir / 'bc_trajectory_mean.csv'
     pd.DataFrame(mean_traj, columns=JOINT_COLS).to_csv(mean_path, index=False)
-    print(f'    → bc_trajectory_mean.csv  ({median_len} frame)')
+    print(f'    -> bc_trajectory_mean.csv  ({median_len} frame)')
 
-    # ── Metriche per-run ──────────────────────────────────────────────────
+    # ── Metrics per-run ──────────────────────────────────────────────────
     rows = []
     for i, traj in enumerate(resampled):
         jm  = compute_metrics(traj, baseline)
@@ -109,9 +107,9 @@ def aggregate_arch(arch_dir: Path, baseline: np.ndarray,
     runs_df   = pd.DataFrame(rows)
     runs_path = arch_dir / 'runs_metrics.csv'
     runs_df.to_csv(runs_path, index=False)
-    print(f'    → runs_metrics.csv  ({n_runs} run)')
+    print(f'    -> runs_metrics.csv  ({n_runs} run)')
 
-    # ── Riepilogo varianza ─────────────────────────────────────────────────
+    # ── Summary of variance ─────────────────────────────────────────────────
     print(f'    Std across {n_runs} runs:')
     for col in ['dtw_distance', 'cart_dtw', 'rmse_mean', 'smoothness']:
         if col in runs_df.columns:
@@ -121,24 +119,24 @@ def aggregate_arch(arch_dir: Path, baseline: np.ndarray,
 
 
 def run_aggregation(exercise_num: int, n_demos: int = 55) -> None:
-    '''Aggrega tutte le architetture per un esercizio e uno split.'''
+    '''Aggregates all architectures for one exercise and split.'''
     exercise_name = f'exercise_{exercise_num:03d}'
     dataset_dir   = DATA_ROOT / 'dataset' / exercise_name
     split_dir     = dataset_dir / split_name(n_demos)
 
     print(f'\n{"="*60}')
-    print(f'  Aggregating runs — {exercise_name}  [{split_name(n_demos)}]')
+    print(f'  Aggregating runs - {exercise_name}  [{split_name(n_demos)}]')
     print(f'{"="*60}')
 
     # Baseline
     baseline_path = dataset_dir / 'baseline.csv'
     if not baseline_path.exists():
-        print(f'  [!] baseline.csv non trovato — impossibile calcolare metriche.')
+        print(f'  [!] baseline.csv not found - impossible to compute metrics.')
         return
     baseline_df = pd.read_csv(baseline_path)
     baseline    = baseline_df[JOINT_COLS].dropna().values.astype(float)
 
-    # Braccio attivo (stessa logica di evaluate_exercise.py)
+    # Active arm (same logic as evaluate_exercise.py)
     stds         = np.std(baseline, axis=0)
     active_joint = int(np.argmax(stds))
     active_side  = 'right' if active_joint < 8 else 'left'
@@ -148,7 +146,7 @@ def run_aggregation(exercise_num: int, n_demos: int = 55) -> None:
     for arch_name in ARCHITECTURES:
         arch_dir = split_dir / arch_name
         if not arch_dir.is_dir():
-            print(f'\n  [{arch_name}] Cartella non trovata — skip.')
+            print(f'\n  [{arch_name}] Folder not found - skip.')
             continue
         ok = aggregate_arch(arch_dir, baseline, active_side)
         results[arch_name] = 'OK' if ok else 'SKIP'
@@ -159,13 +157,9 @@ def run_aggregation(exercise_num: int, n_demos: int = 55) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Aggregate BC training runs for each architecture.')
-    parser.add_argument('--exercise', type=int, nargs='+', required=True,
-                        metavar='N', help='Exercise number(s).')
-    parser.add_argument('--n-demos', type=int, nargs='+', default=[55],
-                        choices=N_DEMOS_SPLITS,
-                        help='Split(s) da aggregare (default: 55).')
+    parser = argparse.ArgumentParser(description='Aggregate BC training runs for each architecture.')
+    parser.add_argument('--exercise', type=int, nargs='+', required=True, metavar='N', help='Exercise number(s).')
+    parser.add_argument('--n-demos', type=int, nargs='+', default=[55], choices=N_DEMOS_SPLITS, help='Split(s) to aggregate (default: 55).')
     args = parser.parse_args()
 
     for n in args.n_demos:

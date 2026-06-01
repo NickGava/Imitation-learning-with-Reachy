@@ -144,7 +144,7 @@ class BCPolicyMLP(nn.Module):
 def load_ensemble(model_dir: Path):
     """
     Loads all fold models and scalers for ensemble inference.
-    Returns a list of (model, scaler) pairs — one per fold.
+    Returns a list of (model, scaler) pairs - one per fold.
     Falls back to single bc_model.pth if no fold files found.
     """
     fold_idx = 0
@@ -177,9 +177,7 @@ def load_ensemble(model_dir: Path):
 # ---------------------------------------------------------------------------
 # Autoregressive loop (ensemble)
 # ---------------------------------------------------------------------------
-def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
-                stop_threshold: float = STOP_THRESHOLD_M,
-                stop_window:    int   = STOP_WINDOW) -> np.ndarray:
+def run_bc_loop(ensemble, n_steps: int, start_pose: dict, stop_threshold: float = STOP_THRESHOLD_M, stop_window: int = STOP_WINDOW) -> np.ndarray:
     """
     Runs the autoregressive loop using an ensemble of MLP models.
     At each step, all K models predict a delta independently.
@@ -187,9 +185,9 @@ def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
 
     Heuristic stopping criterion (disabled if stop_threshold is None):
       Two-phase state machine:
-        1. DEPARTED  — waits until at least one wrist moves more than
+        1. DEPARTED  - waits until at least one wrist moves more than
                        stop_threshold metres away from its start FK position.
-        2. RETURNED  — once departed, counts consecutive frames where both
+        2. RETURNED  - once departed, counts consecutive frames where both
                        wrists are within stop_threshold of the start position.
                        Stops after stop_window such frames.
       This makes the criterion exercise-agnostic: it triggers on the first
@@ -227,7 +225,7 @@ def run_bc_loop(ensemble, n_steps: int, start_pose: dict,
         q_current    = q_new
         q_traj[step] = q_new
 
-        # --- Heuristic stopping criterion (FK-based, departed → returned) ---
+        # --- Heuristic stopping criterion (FK-based, departed -> returned) ---
         if stop_threshold is not None:
             _, r_wrist_cur = fk(q_current[0:4],  'right')
             _, l_wrist_cur = fk(q_current[8:12], 'left')
@@ -296,7 +294,7 @@ def plot_joints_trajectory(q_traj: np.ndarray, exercise_num: int, output_path: P
         axes = np.array([axes])
 
     fig.suptitle(
-        f'Joint angles (MLP) — exercise_{exercise_num:03d}\n'
+        f'Joint angles (MLP) - exercise_{exercise_num:03d}\n'
         f'(Y scale = robot joint limits)',
         fontsize=13, fontweight='bold', y=1.01,
     )
@@ -339,7 +337,7 @@ def plot_joints_trajectory(q_traj: np.ndarray, exercise_num: int, output_path: P
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
-    print(f'Plot saved → {output_path}')
+    print(f'Plot saved -> {output_path}')
 
 # ---------------------------------------------------------------------------
 # Simulator helpers (only used with --sim)
@@ -402,7 +400,7 @@ def plot_fk_trajectories(all_fk, exercise_num, output_path: Path):
 
     fig, axs = plt.subplots(3, 2, figsize=(13, 10))
     fig.suptitle(
-        f'FK trajectories — Exercise {exercise_num:03d}  [MLP]\n'
+        f'FK trajectories - Exercise {exercise_num:03d}  [MLP]\n'
         f'(Reachy torso frame: X=forward, Y=left, Z=up)', fontsize=13)
     axs[0, 0].set_title('Right arm', fontsize=11)
     axs[0, 1].set_title('Left arm',  fontsize=11)
@@ -432,7 +430,7 @@ def plot_fk_trajectories(all_fk, exercise_num, output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
-    print(f'Plot saved → {output_path}')
+    print(f'Plot saved -> {output_path}')
 
 
 # ---------------------------------------------------------------------------
@@ -446,42 +444,22 @@ def main():
     parser.add_argument('--sim',      action='store_true',
                         help='Send trajectory to Unity simulator.')
     parser.add_argument('--host',     type=str, default=SIMULATOR_HOST)
-    parser.add_argument('--no-stop',  action='store_true',
-                        help='Disable heuristic stopping criterion (run for full n_steps).')
-    parser.add_argument('--stop-threshold', type=float, default=STOP_THRESHOLD_M,
-                        metavar='M',
-                        help=f'Wrist distance threshold in metres (default: {STOP_THRESHOLD_M}).')
-    parser.add_argument('--stop-window', type=int, default=STOP_WINDOW,
-                        metavar='N',
-                        help=f'Consecutive frames below threshold before stopping '
-                             f'(default: {STOP_WINDOW}).')
+    parser.add_argument('--no-stop',  action='store_true', help='Disable heuristic stopping criterion (run for full n_steps).')
+    parser.add_argument('--stop-threshold', type=float, default=STOP_THRESHOLD_M, metavar='M', help=f'Wrist distance threshold in metres (default: {STOP_THRESHOLD_M}).')
+    parser.add_argument('--stop-window', type=int, default=STOP_WINDOW, metavar='N', help=f'Consecutive frames below threshold before stopping (default: {STOP_WINDOW}).')
     parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
-    parser.add_argument('--run', type=int, default=None,
-                    help='Training run index. If set, loads from ARCH/run_N/.')
+    parser.add_argument('--run', type=int, default=None, help='Training run index. If set, loads from ARCH/run_N/.')
 
     args = parser.parse_args()
 
     exercise_dir = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}'
     split_dir    = exercise_dir / split_name(args.n_demos)
-    _base_dir     = split_dir / 'MLP'           # o GRU / Transformer
+    _base_dir     = split_dir / 'MLP'           
     model_dir = _base_dir / f'run_{args.run}' if args.run is not None else _base_dir
     plot_path    = split_dir / 'plots' / 'bc_MLP.png'
 
     ensemble   = load_ensemble(model_dir)
     start_pose = _load_start_pose(split_dir)
-
-    # if args.steps is not None:
-    #     n_steps = args.steps
-    #     print(f'Steps: {n_steps}  (from --steps)')
-    # elif (exercise_dir / 'canonical.csv').exists():
-    #     n_steps = len(pd.read_csv(exercise_dir / 'canonical.csv'))
-    #     print(f'Steps: {n_steps}  (from canonical.csv)')
-    # elif (exercise_dir / 'baseline.csv').exists():
-    #     n_steps = len(pd.read_csv(exercise_dir / 'baseline.csv'))
-    #     print(f'Steps: {n_steps}  (from baseline.csv)')
-    # else:
-    #     n_steps = 300
-    #     print(f'Steps: {n_steps}  (default)')
     n_steps = 1000
     
     reachy = None
@@ -508,7 +486,7 @@ def main():
             plot_joints_trajectory(q_traj, args.exercise, joints_path)
             traj_path = model_dir / 'bc_trajectory.csv'
             pd.DataFrame(q_traj, columns=JOINT_COLS).to_csv(traj_path, index=False)
-            print(f'Trajectory saved → {traj_path}')
+            print(f'Trajectory saved -> {traj_path}')
             
         if reachy is not None:
             _goto_pose(reachy, start_pose, GOTO_DURATION)

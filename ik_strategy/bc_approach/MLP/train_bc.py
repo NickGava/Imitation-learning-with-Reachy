@@ -5,8 +5,8 @@ Trains the Behavioral Cloning MLP for a single exercise using k-fold
 cross validation. Produces K independent models, one per fold.
 
 Architecture : 32 -> [256, ReLU] -> [256, ReLU] -> 16
-Input        : [q(t), dq(t)]  — current position + velocity (32 values)
-Output       : Δq(t)          — joint delta (16 values)
+Input        : [q(t), dq(t)]  - current position + velocity (32 values)
+Output       : Δq(t)          - joint delta (16 values)
 Loss         : MSE
 Optimizer    : Adam (lr=1e-3)
 Early stopping: patience=20 on validation loss
@@ -90,6 +90,15 @@ class BCPolicyMLP(nn.Module):
 # Single fold training
 # ---------------------------------------------------------------------------
 def _train_fold(X_trn, y_trn, X_val, y_val, device, fold_idx, output_dir):
+    '''
+    Train a single MLP fold on pre-split train/val arrays.
+
+    Fits a StandardScaler on training data, trains the MLP with early
+    stopping (patience=PATIENCE), and saves the best checkpoint and
+    scaler to output_dir.
+
+    Returns (best_val_loss, train_losses, val_losses).
+    '''
     scaler  = StandardScaler()
     X_trn_n = scaler.fit_transform(X_trn)
     X_val_n = scaler.transform(X_val)
@@ -184,7 +193,7 @@ def _save_loss_curve(all_train, all_val, path: Path):
         ax.plot(vl, color=colors[i], lw=1.2, alpha=0.7, linestyle='--', label=f'fold {i} val')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('MSE loss')
-    ax.set_title('MLP — K-fold training curves')
+    ax.set_title('MLP - K-fold training curves')
     ax.legend(fontsize=7, ncol=2)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -200,9 +209,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train BC MLP (k-fold) for one exercise.')
     parser.add_argument('exercise', type=int, help='Exercise number (e.g. 1)')
     parser.add_argument('--n-demos', type=int, default=55, choices=[10,25,55])
-    parser.add_argument('--run', type=int, default=None,
-                        help='Training run index (1-based). Saves to MLP/run_N/ with a '
-                             'different random seed for reproducible independence.')
+    parser.add_argument('--run', type=int, default=None, help='Training run index (1-based). Saves to MLP/run_N/ with a different random seed for reproducible independence.')
     args = parser.parse_args()
 
     split_dir    = DATA_ROOT / 'dataset' / f'exercise_{args.exercise:03d}' / split_name(args.n_demos)

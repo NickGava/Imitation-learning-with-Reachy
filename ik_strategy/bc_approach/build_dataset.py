@@ -2,16 +2,16 @@
 build_dataset.py
 =============================================================================
 Builds the behavioral cloning training dataset for a single exercise.
-Shared between MLP and GRU approaches — both consume the same CSV.
+Shared between MLP, GRU and Transformer approaches - they consume the same CSV.
 
 Crawls all joint_ik.csv files for the requested exercise (all subjects,
 all videos) and assembles them into a single bc_dataset.csv.
 
 Each row represents one timestep:
   - Metadata : subject, exercise, video, frame, timestamp
-  - State    : current joint positions q(t)              [8 values]
-               joint velocity q(t) - q(t-VELOCITY_LAG)   [8 values]
-  - Action   : joint delta q(t+1) - q(t)                 [8 values]
+  - State    : current joint positions q(t)              [16 values]
+               joint velocity q(t) - q(t-VELOCITY_LAG)   [16 values]
+  - Action   : joint delta q(t+1) - q(t)                 [16 values]
 
 The first VELOCITY_LAG and last 1 frames of each video are dropped.
 
@@ -36,7 +36,7 @@ from utilities.split_utils import split_name, select_subjects
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-N_JOINTS = len(JOINT_COLS)  # 8
+N_JOINTS = len(JOINT_COLS)  # 16
 
 # How many frames back to compute velocity.
 # Must match VELOCITY_LAG in MLP/test_bc.py.
@@ -65,14 +65,14 @@ def process_file(path: Path, subject: int, exercise: int, video: int):
 
     min_frames = VELOCITY_LAG + 2
     if len(df) < min_frames:
-        print(f'  [SKIP] {path} — fewer than {min_frames} frames ({len(df)})')
+        print(f'  [SKIP] {path} - fewer than {min_frames} frames ({len(df)})')
         return None
 
     if not all(c in df.columns for c in JOINT_COLS):
-        print(f'  [SKIP] {path} — missing joint columns')
+        print(f'  [SKIP] {path} - missing joint columns')
         return None
 
-    q = df[JOINT_COLS].values  # (N, 8)
+    q = df[JOINT_COLS].values  # (N, 16)
 
     rows = []
     for t in range(VELOCITY_LAG, len(df) - 1):
@@ -132,7 +132,7 @@ def main():
             subject_num = int(parts[-4].split('_')[-1])
             video_num   = int(parts[-2].split('_')[-1])
         except (IndexError, ValueError):
-            print(f'  [SKIP] {path} — unexpected folder structure')
+            print(f'  [SKIP] {path} - unexpected folder structure')
             continue
 
         print(f'  subject={subject_num:03d}  video={video_num:03d}  →  {path.name}')
