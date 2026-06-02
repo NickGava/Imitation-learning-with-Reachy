@@ -1,6 +1,6 @@
-# ik-strategy — Learning by Demonstration for Reachy
+# Learning by Demonstration with Reachy
 
-> Master's thesis project — Erasmus internship, February–July 2026  
+> Master's thesis project - Erasmus internship, February–July 2026  
 > **Goal:** teach the Reachy humanoid robot to replicate physiotherapy exercises demonstrated by a human, using imitation learning.
 
 ---
@@ -9,10 +9,10 @@
 
 The system captures human upper-body movements via stereo video, extracts 3D joint positions with MediaPipe Pose, solves inverse kinematics to obtain Reachy's joint angles, and then learns to reproduce the motion through two parallel approaches:
 
-- **Canonical trajectory** — two methods computed in parallel from the same demonstrations:
+- **Canonical trajectory** - two methods computed in parallel from the same demonstrations:
   - **Standard DBA** (DTW Barycenter Averaging via `tslearn`) → `canonical.csv`
   - **ShapeDBA** (ShapeDTW Barycenter Averaging via `aeon`) → `canonicalShape.csv`
-- **Behavioral Cloning (BC)** — three neural architectures (MLP, GRU, Transformer) trained on state-action pairs from IK-solved trajectories. Multiple independent training runs can be aggregated to reduce variance.
+- **Behavioral Cloning (BC)** - three neural architectures (MLP, GRU, Transformer) trained on state-action pairs from IK-solved trajectories.
 
 Exercise numbering encodes the acquisition modality:
 
@@ -26,7 +26,7 @@ Exercise numbering encodes the acquisition modality:
 
 ## Setup
 
-> Requires Python 3.9 and a virtual environment (`.venv_win39` on Windows).
+> Python 3.9 is required and using a virtual environment is recommended.
 
 ```bash
 # 1. Install dependencies
@@ -41,25 +41,24 @@ pip install -e .
 ## Project structure
 
 ```
-ik_strategy/
+imitationLearningWithReachy/
 │
 ├── pyproject.toml                  # Package definition (setuptools)
 ├── requirements.txt
 │
-├── run_data_acquisition.py         # Entry point: full acquisition pipeline (steps 1–4)
+├── run_data_acquisition.py         # Entry point: full acquisition pipeline 
 ├── run_compute_canonical.py        # Entry point: canonical trajectory (DBA + ShapeDBA)
 ├── run_bc_approach.py              # Entry point: BC pipeline (build → train → test → aggregate)
 ├── run_simulation.py               # Entry point: send any trajectory to simulator/robot
-├── run_pipeline.py                 # Legacy single-video pipeline runner
 │
-├── data_acquisition/               # Steps 1–4 — pose estimation & IK solving
+├── data_acquisition/               # Data acquisition pipeline files
 │   ├── pose_estimation.py          #   MediaPipe Pose, mono video → pose.csv
 │   ├── pose_estimation_stereo.py   #   stereo video → pose.csv (SGBM depth)
 │   ├── stereo_config.py            #   camera intrinsics, extrinsics, SGBM params
 │   ├── stereo_calibrate.py         #   stereo calibration tool
-│   ├── data_cleaning.py            #   step 2: visibility filter + One Euro Filter
-│   ├── mapping.py                  #   step 3: landmark → Reachy torso frame
-│   ├── run_ik.py                   #   step 4: IK solver (L-BFGS-B) → joint_ik.csv
+│   ├── data_cleaning.py            #   visibility filter + One Euro Filter
+│   ├── mapping.py                  #   camera frame → Reachy torso frame
+│   ├── run_ik.py                   #   IK solver → joint_ik.csv
 │   └── save_landmarks.py           #   CSV writer helper
 │
 ├── canonical_approach/
@@ -68,15 +67,14 @@ ik_strategy/
 ├── bc_approach/                    # Behavioral Cloning
 │   ├── build_dataset.py            #   assembles n_XX/bc_dataset.csv (state, velocity, action)
 │   ├── aggregate_runs.py           #   averages multiple training runs → bc_trajectory_mean.csv + runs_metrics.csv
-│   ├── evaluate_bc.py              #   legacy per-model DTW evaluation (standalone)
 │   ├── MLP/
 │   │   ├── train_bc.py             #   MLP training (k-fold, early stopping)
-│   │   └── test_bc.py              #   MLP autoregressive inference + FK plot
+│   │   └── test_bc.py              #   MLP autoregressive inference 
 │   ├── GRU/
 │   │   ├── train_bc.py             #   GRU training
-│   │   └── test_bc.py              #   GRU autoregressive inference (with hidden state)
+│   │   └── test_bc.py              #   GRU autoregressive inference
 │   └── Transformer/
-│       ├── train_bc.py             #   Transformer training (causal window)
+│       ├── train_bc.py             #   Transformer training 
 │       └── test_bc.py              #   Transformer autoregressive inference
 │
 ├── evaluation_and_comparison/      # Quantitative evaluation
@@ -89,16 +87,16 @@ ik_strategy/
 │   ├── _metrics.py                 #   DTW, RMSE, Pearson, smoothness, velocity
 │   └── _plots.py                   #   all plot functions (degradation chain, heatmap, spider, 3D...)
 │
-├── reachyController/               # Low-level robot interface (Benoît)
+├── reachyController/               # Low-level robot interface
 │   ├── reachyController.py         #   joint trajectory execution via ReachySDK
 │   ├── timeSeries.py               #   time-series utilities for robot execution
 │   └── config.py                   #   robot-side constants
 │
 └── utilities/                      # Shared helpers
-    ├── config.py                   #   DATA_ROOT, JOINT_COLS, joint limits, REST_DEG
+    ├── config.py                   #   DATA_ROOT, JOINT_COLS, joint limits, REST_DEG, ...
     ├── split_utils.py              #   split_name(), N_DEMOS_SPLITS
     ├── ask_inputs.py               #   interactive subject/exercise/video prompts
-    ├── record_stereo.py            #   synchronized stereo recording from Reachy cameras
+    ├── record_stereo.py            #   stereo recording from Reachy cameras
     ├── plot_pose.py                #   pose time-series plots (X/Y/Z per landmark)
     └── plot_joints.py              #   joint angle plots from joint_ik.csv
 ```
@@ -107,7 +105,7 @@ ik_strategy/
 
 ## Data structure
 
-All data lives under `ik_strategy/data/` (not tracked in git):
+All data lives under `imitationLearningWithReachy/_data/` (not tracked in git):
 
 ```
 data/
@@ -196,7 +194,7 @@ Computes both Standard DBA and ShapeDBA in a single run.
 ```bash
 py run_compute_canonical.py --n-demos 55           # all exercises
 py run_compute_canonical.py --exercise 1           # single exercise
-py run_compute_canonical.py --exercise 1 --n-demos 10 --reach 5
+py run_compute_canonical.py --exercise 1 --n-demos 10
 ```
 
 ### BC approach (build → train → test → aggregate)
@@ -246,73 +244,18 @@ py -m evaluation_and_comparison.evaluate --exercise 1 --n-demos 10 25 55
 py -m evaluation_and_comparison.evaluate --all
 
 # Modality comparison (Stereo vs Mixed vs Mono)
-py -m evaluation_and_comparison.evaluate --analysis modality
 py -m evaluation_and_comparison.evaluate_modality --n-demos 55
 
-# Demos sensitivity (ablation study)
-py -m evaluation_and_comparison.evaluate --analysis demos --exercise 21
+# Demos sensitivity 
 py -m evaluation_and_comparison.evaluate_demos --exercise 21
 py -m evaluation_and_comparison.evaluate_demos --all
 ```
 
-**Metrics computed:** Cartesian DTW, RMSE per joint, RMSE wrist/elbow, peak angle error, Pearson correlation (joint-space and Cartesian), smoothness (−mean squared jerk), velocity profile.
-
-**Full evaluation sequence (all splits, all analyses):**
-
-```bash
-py run_compute_canonical.py --n-demos 10
-py run_compute_canonical.py --n-demos 25
-py run_compute_canonical.py --n-demos 55
-
-py run_bc_approach.py --exercise a --n-demos 10  --training-runs 5
-py run_bc_approach.py --exercise a --n-demos 25  --training-runs 5
-py run_bc_approach.py --exercise a --n-demos 55  --training-runs 5
-
-py -m evaluation_and_comparison.evaluate --all --n-demos 10
-py -m evaluation_and_comparison.evaluate --all --n-demos 25
-py -m evaluation_and_comparison.evaluate --all --n-demos 55
-
-py -m evaluation_and_comparison.evaluate_demos --all
-py -m evaluation_and_comparison.evaluate_modality --n-demos 55
-```
-
----
-
-## Key design choices
-
-| Choice | Rationale |
-|--------|-----------|
-| 8 active joints (shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch × 2 arms) | Forearm/wrist orientation not reliably recoverable from RGB pose estimation |
-| `VELOCITY_LAG = 5` frames for velocity features | More robust than single-frame finite difference; dampens startup transients and accumulates less autoregressive error |
-| Video-level train/val split (k-fold with `math.ceil`) | Prevents temporal data leakage; `math.ceil` avoids Python's banker's rounding (e.g. K=3 not K=2 with 10 videos) |
-| ShapeDBA alongside Standard DBA | ShapeDBA aligns shape descriptors of subsequences → smoother, more shape-faithful canonical; fair comparison via shared amplitude normalization |
-| Amplitude normalization before DBA | Normalize per-joint to [0,1] before averaging, then rescale using the Nth percentile of demo amplitudes — prevents low-amplitude demos from dominating the barycenter |
-| Multiple training runs + aggregation | `bc_trajectory_mean.csv` averages runs frame-by-frame; `runs_metrics.csv` exposes inter-run std shown as error bars in evaluation plots |
-| Stereo depth with persistence + spike rejection | SGBM alone is noisy; persistence fallback fills gaps; One Euro Filter smooths Z over time |
-| Start pose saved into model checkpoint | Critical for correct BC inference initialization; avoids divergence at frame ~100 |
-| FK-based stopping criterion (two-phase state machine) | Exercise-agnostic; stops when wrists return within 0.10 m of start after having departed — no fixed `n_steps` required |
-| Collision check every 5 frames during playback | `_checkCollision` is called every 5 frames via `_safety_check`; `goal_position` is set every frame for smooth motion |
-
----
-
-## Dependencies
-
-```
-opencv-contrib-python >= 4.13   # includes cv2.ximgproc (SGBM, WLS filter)
-mediapipe
-torch
-aeon                            # ShapeDBA (elastic_barycenter_average)
-tslearn                         # Standard DBA + DTW metrics
-scipy
-pandas
-numpy
-matplotlib
-reachy-sdk
-```
+**Metrics computed:** Cartesian DTW, RMSE per joint, RMSE wrist/elbow, peak angle error, Pearson correlation (joint-space and Cartesian), smoothness, velocity profile.
 
 ---
 
 ## Authors
 
-Nicolò — master's student, Computer Engineering (Automation and Intelligent Cyber-Physical Systems)  
-Erasmus thesis internship, February–July 2026
+Nicolò Gavassa - master's student, Computer Engineering (Automation and Intelligent Cyber-Physical Systems)  
+Erasmus thesis internship, February-July 2026
